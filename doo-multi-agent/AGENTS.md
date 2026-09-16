@@ -46,6 +46,23 @@ npm start            # = cd web && npx tsx server/index.ts
 - 前端产物 `web/dist/index.html` 必须存在；后端在 `web/server/index.ts` 末尾
   用 `express.static` 托管它，否则根路径无页面（接口仍可用）
 
+## 3.5 扣子编程平台接入（2026-09-16 初始化）
+
+平台接入时做了以下工程对齐，**不影响上面 npm 契约的语义**（package.json 里的
+`build` / `start` 脚本保留未动，仍与 README/railway/Dockerfile 一致）：
+
+- **包管理器从 npm 迁移到 pnpm**：两处 `package-lock.json` 已移除，改用
+  `pnpm-lock.yaml`（根 + `web/`）。平台强制 Node 用 pnpm。
+- **`.coze` 体系（多层）**：
+  - 根 `/workspace/projects/.coze`：`project_type="web"`、`sub_id=ad8babbd`、
+    `requires=["nodejs-24"]`、`[subprojects].path=["doo-multi-agent"]`，含 `[dev]` 与 `[deploy]`。
+  - 子项目 `doo-multi-agent/.coze`：`sub_id/name/project_type` 已补齐。
+- **预览端口**：`.preview` 声明 `expose_port=5000`（已加 gitignore）。
+- **预览 / 部署脚本**：`scripts/build.sh`（pnpm 安装依赖 + 构建前端 → `web/dist`）、
+  `scripts/run.sh`（读 `.preview` 端口 fallback 5000，`cd web && pnpm exec tsx server/index.ts`，
+  绑定 0.0.0.0）。run 脚本从 `.preview` 读端口，未 hardcode。
+- `.gitignore` 已加 `.preview`。
+
 ## 4. ⚠️ 硬性约束（违反会导致健康检查失败）
 
 1. **端口必须用平台注入的环境变量**，不要写死：

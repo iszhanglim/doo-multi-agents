@@ -5,6 +5,7 @@ test-data/
 *.js.map
 *.d.ts
 .env
+.preview
 .DS_Store
 .idea/
 .runlogs/

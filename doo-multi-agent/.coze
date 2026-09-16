@@ -1,0 +1,5 @@
+[project]
+sub_id = "ad8babbd"
+name = "doo-multi-agent"
+requires = ["nodejs-24"]
+project_type = "web"

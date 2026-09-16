@@ -1,0 +1,20 @@
+[project]
+sub_id = "ad8babbd"
+name = "doo-multi-agent"
+requires = ["nodejs-24"]
+project_type = "web"
+version = "0.0.35"
+
+[preview]
+preview_enable = "enabled"
+
+[dev]
+build = ["bash", "doo-multi-agent/scripts/build.sh"]
+run = ["bash", "doo-multi-agent/scripts/run.sh"]
+
+[deploy]
+build = ["bash", "doo-multi-agent/scripts/build.sh"]
+run = ["bash", "doo-multi-agent/scripts/run.sh"]
+
+[subprojects]
+path = ["doo-multi-agent"]
