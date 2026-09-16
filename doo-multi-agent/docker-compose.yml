@@ -1,0 +1,85 @@
+# ===========================================================================
+# DOO 多智能体系统 —— 单机生产编排（应用 + PostgreSQL）
+#
+#   docker compose up -d --build       # 首次启动
+#   docker compose logs -f app         # 看日志
+#   docker compose down                # 停止（数据保留在命名卷里）
+#   docker compose down -v             # 停止并删除数据（谨慎）
+#
+# 前置：在 doo-multi-agent/ 目录下准备好 .env（含 LLM_API_KEY）。
+#       绝不把 .env 提交到 git —— 该文件已被 .gitignore 忽略。
+# ===========================================================================
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: doo-multi-agent:latest
+    container_name: doo-app
+    restart: unless-stopped
+
+    # LLM 等敏感配置从 .env 注入（不写死在 compose 里）
+    env_file:
+      - .env
+
+    environment:
+      NODE_ENV: production
+      PORT: "3001"
+      # 设了 DATABASE_URL，代码就会走 PostgresStorage：
+      #   - 肖像数据落库（src/index.ts:63）
+      #   - 教师账号可注册、密码 bcrypt 校验（web/server/index.ts getPostgres()）
+      # 删掉这一行则退回 JSON 文件模式 + 硬编码账号（仅演示用）
+      DATABASE_URL: postgres://doo:${POSTGRES_PASSWORD:-change-me-please}@db:5432/doo
+
+    ports:
+      # 只监听回环，由宿主 Nginx 对外提供 HTTPS。
+      # 若不需要 Nginx、想直接对外暴露，改成 "3001:3001"
+      - "127.0.0.1:3001:3001"
+
+    volumes:
+      # JSON 模式下的画像数据；接了 Postgres 后此卷仅作兜底
+      - doo-data:/app/web/data
+
+    depends_on:
+      db:
+        # 关键：PostgresStorage.init() 只在构造时调用一次且失败不重试，
+        # 数据库没就绪会导致建表失败且不会自愈，必须等健康检查通过
+        condition: service_healthy
+
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3001/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      start_period: 45s
+      retries: 3
+
+  db:
+    image: postgres:16-alpine
+    container_name: doo-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: doo
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me-please}
+      POSTGRES_DB: doo
+      # 中文姓名/叙事文本需要 UTF-8
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    volumes:
+      - doo-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U doo -d doo"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    # 不映射端口到宿主：库只应被 app 通过内部网络访问
+    expose:
+      - "5432"
+
+volumes:
+  doo-data:
+  doo-pgdata:

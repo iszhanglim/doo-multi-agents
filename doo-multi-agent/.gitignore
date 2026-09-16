@@ -1,0 +1,14 @@
+node_modules/
+dist/
+data/
+test-data/
+*.js.map
+*.d.ts
+.env
+.DS_Store
+.idea/
+.runlogs/
+web/node_modules/
+web/dist/
+web/.edgetts/
+web/.stt/

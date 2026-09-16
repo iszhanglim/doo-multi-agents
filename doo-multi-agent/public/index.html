@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>DOO 多智能体网页界面</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <main class="shell">
+    <section class="hero">
+      <div>
+        <p class="eyebrow">DOO 多智能体</p>
+        <h1>大班幼儿叙事能力评估台</h1>
+        <p class="lede">在这里直接进行叙事评估、运行场景、查看画像和报告。</p>
+      </div>
+      <div class="hero-card" id="healthCard">
+        <span class="dot"></span>
+        <div>
+          <p>服务状态</p>
+          <strong>检查中...</strong>
+        </div>
+      </div>
+    </section>
+
+    <section class="grid">
+      <article class="panel">
+        <h2>叙事评估</h2>
+        <form id="assessForm">
+          <input name="childId" placeholder="幼儿ID" value="child_001" />
+          <input name="childName" placeholder="幼儿姓名" value="小明" />
+          <input name="classId" placeholder="班级ID" value="class_001" />
+          <textarea name="content" rows="5" placeholder="输入叙事内容">我今天去公园玩，看到了很多花，很开心。</textarea>
+          <button type="submit">开始评估</button>
+        </form>
+      </article>
+
+      <article class="panel">
+        <h2>运行场景</h2>
+        <form id="scenarioForm">
+          <input name="childId" placeholder="幼儿ID" value="child_001" />
+          <input name="childName" placeholder="幼儿姓名" value="小明" />
+          <input name="classId" placeholder="班级ID" value="class_001" />
+          <select name="scenario">
+            <option value="smart_story_corner">smart_story_corner</option>
+            <option value="narrative_train">narrative_train</option>
+            <option value="journey_podcast">journey_podcast</option>
+          </select>
+          <textarea name="content" rows="5">我今天去公园玩，看到了很多花，很开心。</textarea>
+          <button type="submit">运行场景</button>
+        </form>
+      </article>
+    </section>
+
+    <section class="grid two">
+      <article class="panel">
+        <div class="panel-head">
+          <h2>幼儿画像</h2>
+          <div class="inline">
+            <input id="portraitId" value="child_001" placeholder="child_001" />
+            <button id="loadPortrait" type="button">查看</button>
+          </div>
+        </div>
+        <pre id="portraitOutput" class="output">等待查询...</pre>
+      </article>
+
+      <article class="panel">
+        <div class="panel-head">
+          <h2>评估报告</h2>
+          <div class="inline">
+            <input id="reportId" value="child_001" placeholder="child_001" />
+            <button id="loadReport" type="button">查看</button>
+          </div>
+        </div>
+        <pre id="reportOutput" class="output">等待查询...</pre>
+      </article>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <h2>已有画像</h2>
+        <button id="refreshChildren" type="button">刷新</button>
+      </div>
+      <div id="childrenList" class="chips"></div>
+    </section>
+
+    <section class="panel">
+      <h2>结果</h2>
+      <pre id="resultOutput" class="output">等待操作...</pre>
+    </section>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>

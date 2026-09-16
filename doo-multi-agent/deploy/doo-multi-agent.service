@@ -1,0 +1,61 @@
+# ===========================================================================
+# systemd 服务单元 —— doo-multi-agent（不用 Docker 的裸机部署）
+#
+# 安装:
+#   sudo useradd -r -s /sbin/nologin -d /opt/doo-multi-agent doo
+#   sudo mkdir -p /opt/doo-multi-agent && sudo chown -R doo:doo /opt/doo-multi-agent
+#   # 用 doo 用户把代码放进去，并执行过 npm install + 前端构建
+#   sudo cp deploy/doo-multi-agent.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now doo-multi-agent
+#   journalctl -u doo-multi-agent -f
+#
+# 注意: EnvironmentFile 里的 KEY=VALUE 不能带 export、不能有引号包裹整行，
+#       项目 .env 的格式正好兼容，直接复用即可。
+# ===========================================================================
+
+[Unit]
+Description=DOO Multi-Agent Narrative Assessment Service
+Documentation=https://github.com/iszhanglimm/doo-multi-agent
+After=network-online.target postgresql.service
+Wants=network-online.target
+# 若用本机 PostgreSQL，取消下一行注释，保证库先起来
+# Requires=postgresql.service
+
+[Service]
+Type=simple
+User=doo
+Group=doo
+
+# tsx 直接跑 TS 源码；WORKDIR 必须是 web/，因为 DATA_PATH=./data 相对 cwd 解析
+WorkingDirectory=/opt/doo-multi-agent/web
+ExecStart=/usr/bin/node /opt/doo-multi-agent/web/node_modules/tsx/dist/cli.mjs server/index.ts
+
+EnvironmentFile=/opt/doo-multi-agent/.env
+Environment=NODE_ENV=production
+Environment=PORT=3001
+
+Restart=always
+RestartSec=5
+# 让 Node 有机会处理完在途请求再退出
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=doo-multi-agent
+
+# ---- 安全加固 ----
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+# 注意：上面这些选项对当前 Node 版本均无兼容问题，若启用后起不来
+# 可逐条注释排查（ProtectHome=true 会隐藏 /home，数据务必落在 /opt）
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,41 @@
+# 构建上下文瘦身 + 防止密钥/data 进镜像
+# ⚠️ .env 必须排除：里面是真实的 LLM 密钥，只允许运行时通过 --env-file / 环境变量注入
+
+node_modules
+**/node_modules
+
+.git
+.gitignore
+.gitattributes
+
+# 密钥与本地配置
+.env
+.env.local
+.env.*.local
+# 保留示例文件，方便容器内查字段
+!.env.example
+
+# 构建产物（容器内会重新构建）
+dist
+web/dist
+*.tsbuildinfo
+
+# 语音环境（macOS 残留，Linux 不可用，且体积大）
+web/.edgetts
+web/.stt
+
+# 运行期数据（由数据卷 / PostgreSQL 提供，不进镜像）
+data
+web/data
+test-data
+
+# 开发工具与日志
+.idea
+.vscode
+.runlogs
+.video_agent
+coverage
+*.log
+npm-debug.log*
+docs
+deploy

@@ -1,0 +1,46 @@
+{
+  "name": "doo-multi-agent",
+  "version": "1.0.0",
+  "description": "基于DOO多智能体的大班幼儿叙事能力提升工具",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc && cd web && npm install && npm run build",
+    "start": "cd web && npx tsx server/index.ts",
+    "web": "ts-node src/web/server.ts",
+    "web:legacy": "ts-node src/web/server.ts",
+    "dev": "ts-node src/index.ts",
+    "test": "jest",
+    "test:watch": "jest --watch"
+  },
+  "keywords": [
+    "multi-agent",
+    "education",
+    "narrative",
+    "kindergarten"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "bcrypt": "^6.0.0",
+    "dotenv": "^16.3.0",
+    "openai": "^4.0.0",
+    "pg": "^8.21.0",
+    "sqlite3": "^5.1.6",
+    "uuid": "^9.0.0"
+  },
+  "devDependencies": {
+    "@types/bcrypt": "^6.0.0",
+    "@types/jest": "^29.5.0",
+    "@types/node": "^20.0.0",
+    "@types/pg": "^8.20.0",
+    "@types/sqlite3": "^3.1.8",
+    "@types/uuid": "^9.0.0",
+    "jest": "^29.5.0",
+    "ts-jest": "^29.1.0",
+    "ts-node": "^10.9.0",
+    "typescript": "^5.0.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
