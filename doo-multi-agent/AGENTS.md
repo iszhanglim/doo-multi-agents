@@ -87,6 +87,17 @@ npm start            # = cd web && npx tsx server/index.ts
 代码逻辑（`src/index.ts:63`）：只有 `process.env.DATABASE_URL` 存在时才启用 PostgreSQL；
 否则回落到 JSON 文件存储（多人使用会互相覆盖，且重启丢数据）。
 
+### 5.1 已在扣子平台接入内置 PostgreSQL（2026-09-16 实测通过）
+
+- 平台通过 workload identity 注入连接变量为 **`PGDATABASE_URL`**（完整 `postgresql://...?sslmode=require` 连接串），
+  另含 `PGHOST / PGUSER / PGPASSWORD / PGDATABASE / PGPORT` 组件。
+- 项目 `src/index.ts` 读的是 `DATABASE_URL`，二者不一致。已通过 `scripts/run.sh` 在启动前做映射：
+  `DATABASE_URL` 未设置时 → 优先用 `PGDATABASE_URL` → 否则用 workload identity 拉取 `PGDATABASE_URL` 填充。
+  **不改 `PostgresStorage.ts` / `src/index.ts` 业务逻辑。**
+- 已按下文 SQL 在平台托管的 PostgreSQL（库 `postgres`）中建好 `portraits` 与 `users` 两张表（`CREATE TABLE IF NOT EXISTS`）。
+- 已验证：`/api/assess` 写入的画像真实落库到 `portraits`；`/api/auth/login` 返回 `classId` 证明走 `users` 表（JSON 模式不返回该字段）。
+- 本地无数据库注入时，`DATABASE_URL` 为空 → 自动回落 JSON 文件存储，不影响预览启动。
+
 > 表结构与 `src/portrait/PostgresStorage.ts` 的 `init()` 完全一致，可直接执行：
 
 ```sql
