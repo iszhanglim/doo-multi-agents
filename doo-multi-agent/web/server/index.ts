@@ -618,27 +618,31 @@ async function seedDefaultUsers() {
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { createHash } from 'crypto';
-import { mkdirSync, existsSync, readFileSync } from 'fs';
+import { mkdirSync, existsSync, readFileSync, writeFileSync, unlinkSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
+import { TTSClient, ASRClient, Config, HeaderUtils } from 'coze-coding-dev-sdk';
 
 const execFileAsync = promisify(execFile);
 const ttsCacheDir = join(tmpdir(), 'doo-tts');
 mkdirSync(ttsCacheDir, { recursive: true });
-// 持久化 edge-tts 环境（放项目目录，避免系统重启清空 /tmp 导致语音丢失）
-const EDGE_TTS_PYTHON = process.env.EDGE_TTS_PYTHON || resolve(__dirname, '../.edgetts/bin/python3');
-const TTS_VOICE = 'zh-CN-YunxiaNeural'; // 可爱男童声
+const TTS_SPEAKER = 'saturn_zh_male_shuanglangshaonian_tob'; // 托管音色：开朗少年声，替代原本地 edge-tts 童声
+
+async function fetchAudio(url: string): Promise<Buffer> {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`语音下载失败: HTTP ${r.status}`);
+  return Buffer.from(await r.arrayBuffer());
+}
 
 app.post('/api/tts', async (req, res) => {
   try {
-    const { text, voice, rate } = req.body;
+    const { text, rate } = req.body;
     if (!text || typeof text !== 'string') {
       return res.status(400).json({ error: '缺少 text 参数' });
     }
 
-    const v = voice || TTS_VOICE;
-    const r = rate || '+0%';
-    const hash = createHash('md5').update(`${v}|${r}|${text}`).digest('hex').slice(0, 12);
+    const speechRate = typeof rate === 'string' ? parseInt(rate, 10) || 0 : 0; // '+5%' -> 5
+    const hash = createHash('md5').update(`${TTS_SPEAKER}|${speechRate}|${text}`).digest('hex').slice(0, 12);
     const outFile = join(ttsCacheDir, `${hash}.mp3`);
 
     // 缓存命中
@@ -649,16 +653,13 @@ app.post('/api/tts', async (req, res) => {
       return res.send(audio);
     }
 
-    // 异步调用 edge-tts 生成语音（不阻塞事件循环）
-    await execFileAsync(EDGE_TTS_PYTHON, [
-      '-m', 'edge_tts',
-      '--text', text,
-      '--voice', v,
-      '--rate', r,
-      '--write-media', outFile,
-    ], { timeout: 10000 });
+    // 平台托管 TTS 合成，下载 mp3 后落盘缓存
+    const customHeaders = HeaderUtils.extractForwardHeaders(req.headers);
+    const tts = new TTSClient(new Config(), customHeaders);
+    const response = await tts.synthesize({ uid: 'doo-multi-agent', text, speaker: TTS_SPEAKER, speechRate });
+    const audio = await fetchAudio(response.audioUri);
+    writeFileSync(outFile, audio);
 
-    const audio = readFileSync(outFile);
     res.setHeader('Content-Type', 'audio/mpeg');
     res.setHeader('Cache-Control', 'public, max-age=86400');
     res.send(audio);
@@ -668,107 +669,9 @@ app.post('/api/tts', async (req, res) => {
   }
 });
 
-// ========== STT 语音识别（本地 whisper，不依赖谷歌服务） ==========
-import { spawn } from 'child_process';
-import type { ChildProcess } from 'child_process';
-import { writeFileSync, unlinkSync } from 'fs';
-
-const STT_PYTHON = process.env.STT_PYTHON || resolve(__dirname, '../.stt/bin/python3');
-const STT_WORKER = resolve(__dirname, 'stt_worker.py');
-const STT_MODEL = process.env.STT_MODEL || 'small';
+// ========== STT 语音识别（平台托管 ASR，不依赖本地模型） ==========
 const sttTmpDir = join(tmpdir(), 'doo-stt');
 mkdirSync(sttTmpDir, { recursive: true });
-
-let sttWorker: ChildProcess | null = null;
-let sttBootPromise: Promise<void> | null = null;
-let sttReqSeq = 0;
-const sttPending = new Map<string, { resolve: (r: { ok: boolean; text?: string; error?: string }) => void; timer: NodeJS.Timeout }>();
-
-function killSttWorker(): void {
-  if (sttWorker) {
-    sttWorker.removeAllListeners();
-    sttWorker.kill();
-    sttWorker = null;
-  }
-  sttBootPromise = null;
-  for (const [, p] of sttPending) {
-    clearTimeout(p.timer);
-    p.resolve({ ok: false, error: '语音识别服务已退出' });
-  }
-  sttPending.clear();
-}
-
-function ensureSttWorker(): Promise<void> {
-  if (sttWorker && !sttWorker.killed) return Promise.resolve();
-  if (sttBootPromise) return sttBootPromise;
-
-  sttBootPromise = new Promise<void>((resolveBoot, rejectBoot) => {
-    let proc: ChildProcess;
-    try {
-      proc = spawn(STT_PYTHON, [STT_WORKER], {
-        stdio: ['pipe', 'pipe', 'pipe'],
-        env: { ...process.env, STT_MODEL },
-      });
-    } catch (e) {
-      sttBootPromise = null;
-      rejectBoot(e);
-      return;
-    }
-    sttWorker = proc;
-
-    let booted = false;
-    // 首次启动包含模型下载（约500MB），给足时间
-    const bootTimer = setTimeout(() => {
-      if (!booted) {
-        killSttWorker();
-        rejectBoot(new Error('语音识别服务启动超时'));
-      }
-    }, 300000);
-
-    proc.stdout!.on('data', (d: Buffer) => {
-      for (const ln of d.toString().split('\n')) {
-        const line = ln.trim();
-        if (!line) continue;
-        try {
-          const msg = JSON.parse(line);
-          if (msg.ready && !booted) {
-            booted = true;
-            clearTimeout(bootTimer);
-            resolveBoot();
-            continue;
-          }
-          if (msg.id) {
-            const p = sttPending.get(msg.id);
-            if (p) {
-              sttPending.delete(msg.id);
-              clearTimeout(p.timer);
-              p.resolve(msg);
-            }
-          }
-        } catch {
-          // 忽略无法解析的行
-        }
-      }
-    });
-
-    proc.stderr!.on('data', (d: Buffer) => {
-      const s = d.toString().trim();
-      if (s) console.error('[stt-worker]', s);
-    });
-
-    proc.on('exit', () => {
-      clearTimeout(bootTimer);
-      if (!booted) {
-        sttBootPromise = null;
-        sttWorker = null;
-        rejectBoot(new Error('语音识别服务启动失败，请检查 .stt 环境'));
-      } else {
-        killSttWorker();
-      }
-    });
-  });
-  return sttBootPromise;
-}
 
 /** 按文件头魔数识别真实音频格式（浏览器录音可能是 webm/mp4/wav 等，扩展名必须匹配真实内容） */
 function detectAudioExt(buf: Buffer): string {
@@ -798,28 +701,29 @@ app.post('/api/stt', express.raw({ type: () => true, limit: '30mb' }), async (re
     return res.status(400).json({ error: (e as Error).message });
   }
 
-  const id = `stt_${Date.now()}_${++sttReqSeq}`;
+  // 托管 ASR 支持 wav/mp3/ogg/m4a；webm（Chrome 默认录音格式）先经 ffmpeg 转 16k 单声道 wav
+  const id = `stt_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   const inFile = join(sttTmpDir, `${id}.${ext}`);
+  const outFile = join(sttTmpDir, `${id}.wav`);
   try {
-    await ensureSttWorker();
-    writeFileSync(inFile, audio);
+    let asrBuf = audio;
+    if (ext === 'webm') {
+      writeFileSync(inFile, audio);
+      await execFileAsync('ffmpeg', ['-y', '-i', inFile, '-ar', '16000', '-ac', '1', outFile], { timeout: 30000 });
+      asrBuf = readFileSync(outFile);
+    }
 
-    const result = await new Promise<{ ok: boolean; text?: string; error?: string }>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        sttPending.delete(id);
-        reject(new Error('识别超时'));
-      }, 120000);
-      sttPending.set(id, { resolve, timer });
-      sttWorker!.stdin!.write(JSON.stringify({ id, file: inFile }) + '\n');
-    });
-
-    if (!result.ok) throw new Error(result.error || '识别失败');
+    const customHeaders = HeaderUtils.extractForwardHeaders(req.headers);
+    const asr = new ASRClient(new Config(), customHeaders);
+    const result = await asr.recognize({ base64Data: asrBuf.toString('base64') });
     res.json({ ok: true, text: result.text || '' });
   } catch (error) {
     console.error('STT 识别失败:', (error as Error).message);
     res.status(500).json({ error: (error as Error).message || '语音识别失败' });
   } finally {
-    try { unlinkSync(inFile); } catch { /* 文件可能未写入 */ }
+    for (const f of [inFile, outFile]) {
+      try { unlinkSync(f); } catch { /* 未生成 */ }
+    }
   }
 });
 

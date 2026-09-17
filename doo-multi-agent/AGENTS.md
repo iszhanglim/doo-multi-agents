@@ -26,7 +26,6 @@ src/nlp/LLMClient.ts    ← LLM 调用；第 113 行把 LLM_BASE_URL 当完整 e
 src/portrait/PostgresStorage.ts  ← PG 存储；init() 内建 CREATE TABLE IF NOT EXISTS
 web/package.json        ← 前端 + 服务端依赖，含 tsx / express / vite
 web/server/index.ts     ← HTTP 服务入口（所有 /api/* 路由都在这里）
-web/server/stt_worker.py
 web/dist/               ← 前端构建产物，必须存在，否则访问 / 会 404
 web/data/               ← JSON 模式下的画像数据目录（相对 cwd）
 ```
@@ -144,12 +143,21 @@ CREATE TABLE IF NOT EXISTS users (
 
 | 功能 | 状态 | 原因 |
 |---|---|---|
-| `/api/tts` 语音合成 | ❌ 返回 500 | 依赖 `web/.edgetts`（edge-tts 的 **macOS** venv，未纳入版本控制） |
-| `/api/stt` 语音识别 | ❌ 不可用 | 依赖 `web/.stt`（whisper 的 **macOS** venv，未纳入版本控制） |
 | 单文件上传 > 16MB | ❌ 平台限制 | 扣子部署后单文件上传上限 16MB，而 `/api/stt` 允许 30MB |
 
-如需恢复语音功能：在 Linux 上重建 venv，并通过环境变量
-`EDGE_TTS_PYTHON` / `STT_PYTHON` 指向新的 python 可执行文件。
+### 7.1 语音能力（已接平台托管）
+
+原「已知不可用」的 `/api/tts` 与 `/api/stt` 已于 2026-09 接入平台托管语音服务
+（`coze-coding-dev-sdk` 的 `TTSClient` / `ASRClient`），不再依赖本地 venv：
+
+- `/api/tts`：`TTSClient.synthesize` → 下载 mp3 → 落盘缓存（`/tmp/doo-tts`）后返回
+  `audio/mpeg` 二进制（响应结构不变，前端零改动）。音色固定为
+  `saturn_zh_male_shuanglangshaonian_tob`（开朗少年声）；前端传入的 edge-tts
+  `voice` 参数被忽略，`rate`（如 `+5%`）映射为 `speechRate`。
+- `/api/stt`：保留魔数嗅探 `detectAudioExt`；托管 ASR 只支持 wav/mp3/ogg/m4a，
+  **webm（Chrome MediaRecorder 默认格式）先用 ffmpeg 转 16k 单声道 wav**
+  再 base64 传 `ASRClient.recognize`。响应仍为 `{ok, text, error}`。
+- `web/server/stt_worker.py` 及 whisper worker 基建已随迁移删除。
 
 ## 8. 部署后验证清单
 

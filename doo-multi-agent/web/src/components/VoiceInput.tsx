@@ -5,7 +5,7 @@ interface VoiceInputProps {
 }
 
 /**
- * 语音输入：本地录音（MediaRecorder）+ 服务端 whisper 识别。
+ * 语音输入：本地录音（MediaRecorder）+ 服务端语音识别。
  * 不依赖浏览器 Web Speech API（该服务在国内网络下不可用）。
  */
 const VoiceInput: React.FC<VoiceInputProps> = ({ onTranscript }) => {
