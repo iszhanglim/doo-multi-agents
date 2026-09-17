@@ -1,4 +1,5 @@
 import { LLMConfig } from '../core/types';
+import { LLMClient as CozeLLMClient, Config as CozeConfig } from 'coze-coding-dev-sdk';
 
 export interface LLMResponse {
   content: string;
@@ -37,6 +38,8 @@ export class LLMClient {
             return await this.callAnthropic(prompt);
           case 'custom':
             return await this.callCustom(prompt);
+          case 'coze':
+            return await this.callCoze(prompt);
           default:
             throw new Error(`Unsupported LLM provider: ${this.config.provider}`);
         }
@@ -131,5 +134,19 @@ export class LLMClient {
 
     const data = await response.json();
     return data.choices?.[0]?.message?.content || data.content || data.text || '';
+  }
+
+  /** 平台托管大模型（coze-coding-dev-sdk，凭据自动注入），model 默认豆包 Seed 旗舰 */
+  private async callCoze(prompt: string): Promise<string> {
+    const client = new CozeLLMClient(new CozeConfig({ timeout: REQUEST_TIMEOUT }));
+    const response = await client.invoke(
+      [{ role: 'user', content: prompt }],
+      {
+        model: this.config.model || 'doubao-seed-2-0-pro-260215',
+        temperature: this.config.temperature ?? 0.7,
+        caching: 'enabled',
+      },
+    );
+    return response.content;
   }
 }

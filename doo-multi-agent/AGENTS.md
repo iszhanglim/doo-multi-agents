@@ -22,7 +22,7 @@ tsconfig.json
 src/                    ← 后端核心（智能体、DOO 模型、NLP、画像、场景）
 src/index.ts            ← DOOMultiAgentSystem 入口类；第 63 行按 DATABASE_URL 切换存储
 src/config/default.ts   ← 读环境变量装配配置
-src/nlp/LLMClient.ts    ← LLM 调用；第 113 行把 LLM_BASE_URL 当完整 endpoint POST
+src/nlp/LLMClient.ts    ← LLM 调用；callCustom 把 LLM_BASE_URL 当完整 endpoint POST；callCoze 走平台托管 SDK
 src/portrait/PostgresStorage.ts  ← PG 存储；init() 内建 CREATE TABLE IF NOT EXISTS
 web/package.json        ← 前端 + 服务端依赖，含 tsx / express / vite
 web/server/index.ts     ← HTTP 服务入口（所有 /api/* 路由都在这里）
@@ -125,10 +125,11 @@ CREATE TABLE IF NOT EXISTS users (
 | 变量 | 必填 | 值 |
 |---|---|---|
 | `PORT` | ⬜ 平台注入 | **不要写死**，代码已读取 |
-| `LLM_PROVIDER` | ✅ | `custom` |
-| `LLM_API_KEY` | ✅ | DeepSeek 密钥（只写在平台环境变量里，禁止硬编码进代码） |
-| `LLM_BASE_URL` | ✅ | `https://api.deepseek.com/v1/chat/completions` |
-| `LLM_MODEL` | ✅ | `deepseek-chat` |
+| `LLM_PROVIDER` | ⬜ | 默认 `coze`（平台托管，凭据自动注入、免 key）。设为 `custom` 走自备 DeepSeek |
+| `LLM_MODEL` | ⬜ | 默认 `doubao-seed-2-0-pro-260215`（coze 托管模型） |
+| `LLM_API_KEY` | 仅 custom 必填 | DeepSeek 密钥（只写在平台环境变量里，禁止硬编码进代码） |
+| `LLM_BASE_URL` | 仅 custom 必填 | `https://api.deepseek.com/v1/chat/completions`，必须保留 `/v1/chat/completions` 后缀（它是完整 endpoint，`callCustom` 直接 `fetch`） |
+| `LLM_TIMEOUT_MS` | ⬜ | 单次 LLM 调用超时毫秒，默认 `60000` |
 | `LLM_TEMPERATURE` | ⬜ | `0.7` |
 | `LLM_MAX_TOKENS` | ⬜ | `4096` |
 | `DATABASE_URL` | ✅ 生产必填 | 从「数据库 → 设置」复制的连接串 |
@@ -136,8 +137,7 @@ CREATE TABLE IF NOT EXISTS users (
 | `ACCESS_REALM` | ⬜ | Basic 认证提示语，默认 `DOO Multi-Agent` |
 | `RATE_LIMIT_PER_MIN` | ⬜ | 每 IP 每分钟 `/api/*` 请求上限，默认 `120`；设 `0` 关闭限流 |
 
-**`LLM_BASE_URL` 必须保留 `/v1/chat/completions` 后缀。**
-它不是 SDK 的 baseURL，而是完整 endpoint（`src/nlp/LLMClient.ts:113` 直接 `fetch`）。
+**LLM 接入说明（2026-09 新增）**：默认 provider 为 `coze`——通过 `coze-coding-dev-sdk` 的托管 LLM（`callCoze`），凭据平台自动注入，无需任何 key；`useLLM` 判定（`src/index.ts`）对 `coze` 恒为 true。LLM 调用失败会自动回退规则引擎（`AssessmentEngine.assess` 的 catch 分支），服务不中断。当前平台托管 LLM 账户「资源点不足」（需升级付费套餐/增购积分），故推理暂走规则兜底；充值后无需改代码立即生效。
 
 ## 7. 已知不可用（属预期，不要尝试修复）
 

@@ -55,7 +55,7 @@ export class DOOMultiAgentSystem {
     this.featureExtractor = new FeatureExtractor();
 
     // Assessment
-    const useLLM = !!(config.llm.apiKey && config.llm.apiKey.trim());
+    const useLLM = config.llm.provider === 'coze' || !!(config.llm.apiKey && config.llm.apiKey.trim());
     this.assessmentEngine = new AssessmentEngine(this.llmClient, useLLM);
 
     // Portrait system

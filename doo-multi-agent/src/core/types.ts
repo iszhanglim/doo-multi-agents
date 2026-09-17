@@ -173,7 +173,7 @@ export interface ScenarioResult {
 }
 
 export interface LLMConfig {
-  provider: 'openai' | 'anthropic' | 'custom';
+  provider: 'openai' | 'anthropic' | 'custom' | 'coze';
   apiKey: string;
   baseURL?: string;
   model: string;

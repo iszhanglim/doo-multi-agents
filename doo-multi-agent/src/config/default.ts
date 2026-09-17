@@ -2,11 +2,11 @@ import { SystemConfig } from '../core/types';
 
 export const defaultConfig: SystemConfig = {
   llm: {
-    provider: 'openai',
-    apiKey: process.env.OPENAI_API_KEY || '',
-    model: process.env.LLM_MODEL || 'gpt-3.5-turbo',
-    temperature: 0.7,
-    maxTokens: 2000,
+    provider: (process.env.LLM_PROVIDER as SystemConfig['llm']['provider']) || 'coze',
+    apiKey: process.env.LLM_API_KEY || process.env.OPENAI_API_KEY || '',
+    model: process.env.LLM_MODEL || 'doubao-seed-2-0-pro-260215',
+    temperature: Number(process.env.LLM_TEMPERATURE) || 0.7,
+    maxTokens: Number(process.env.LLM_MAX_TOKENS) || 2000,
   },
   storage: {
     type: 'json',
