@@ -1,5 +1,17 @@
 import { SystemConfig } from '../core/types';
 
+function parseExtraBody(): Record<string, unknown> | undefined {
+  const raw = process.env.LLM_EXTRA_BODY;
+  if (!raw) return undefined;
+  try {
+    const parsed = JSON.parse(raw);
+    return typeof parsed === 'object' && parsed !== null ? parsed : undefined;
+  } catch {
+    console.warn('LLM_EXTRA_BODY 不是合法 JSON，已忽略');
+    return undefined;
+  }
+}
+
 export const defaultConfig: SystemConfig = {
   llm: {
     provider: (process.env.LLM_PROVIDER as SystemConfig['llm']['provider']) || 'coze',
@@ -7,6 +19,7 @@ export const defaultConfig: SystemConfig = {
     model: process.env.LLM_MODEL || 'doubao-seed-2-0-pro-260215',
     temperature: Number(process.env.LLM_TEMPERATURE) || 0.7,
     maxTokens: Number(process.env.LLM_MAX_TOKENS) || 2000,
+    extraBody: parseExtraBody(),
   },
   storage: {
     type: 'json',
@@ -147,6 +160,7 @@ export function loadConfig(): SystemConfig {
       model: process.env.LLM_MODEL || defaultConfig.llm.model,
       temperature: parseFloat(process.env.LLM_TEMPERATURE || '0.7'),
       maxTokens: parseInt(process.env.LLM_MAX_TOKENS || '2000', 10),
+      extraBody: parseExtraBody(),
     },
     storage: {
       type: (process.env.STORAGE_TYPE as 'json' | 'sqlite') || defaultConfig.storage.type,

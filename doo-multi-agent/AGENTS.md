@@ -125,13 +125,14 @@ CREATE TABLE IF NOT EXISTS users (
 | 变量 | 必填 | 值 |
 |---|---|---|
 | `PORT` | ⬜ 平台注入 | **不要写死**，代码已读取 |
-| `LLM_PROVIDER` | ⬜ | 默认 `coze`（平台托管，凭据自动注入、免 key）。设为 `custom` 走自备 DeepSeek |
-| `LLM_MODEL` | ⬜ | 默认 `doubao-seed-2-0-pro-260215`（coze 托管模型） |
-| `LLM_API_KEY` | 仅 custom 必填 | DeepSeek 密钥（只写在平台环境变量里，禁止硬编码进代码） |
-| `LLM_BASE_URL` | 仅 custom 必填 | `https://api.deepseek.com/v1/chat/completions`，必须保留 `/v1/chat/completions` 后缀（它是完整 endpoint，`callCustom` 直接 `fetch`） |
+| `LLM_PROVIDER` | ⬜ | 默认 `coze`（平台托管，免 key）。**当前沙箱 `.env` 配置为 `openai`**（OpenAI 兼容协议走 `callOpenAI`） |
+| `LLM_MODEL` | ⬜ | coze 托管默认 `doubao-seed-2-0-pro-260215`；当前 `.env` 为 `deepseek-flash` |
+| `LLM_API_KEY` | 仅 openai/custom 必填 | DeepSeek 密钥（沙箱放 gitignored 的 `.env`；生产配到平台环境变量，禁止硬编码/入库） |
+| `LLM_BASE_URL` | 仅 openai/custom 必填 | 完整 endpoint：`https://api.deepseek.com/chat/completions`（`callOpenAI`/`callCustom` 都把它当完整 URL 直接 fetch） |
+| `LLM_EXTRA_BODY` | ⬜ | JSON 透传到请求体的额外字段（`LLMConfig.extraBody`）。**DeepSeek 思考模型必配 `{"thinking":{"type":"disabled"}}`**，否则思考耗尽 max_tokens 导致 content 为空 |
 | `LLM_TIMEOUT_MS` | ⬜ | 单次 LLM 调用超时毫秒，默认 `60000` |
 | `LLM_TEMPERATURE` | ⬜ | `0.7` |
-| `LLM_MAX_TOKENS` | ⬜ | `4096` |
+| `LLM_MAX_TOKENS` | ⬜ | 默认 `2000`——**对思考型模型远远不够**，当前 `.env` 为 `8192` |
 | `DATABASE_URL` | ✅ 生产必填 | 从「数据库 → 设置」复制的连接串 |
 | `ACCESS_CODE` | ⚠️ **公网必填** | 共享访问口令。设置后除 `/api/health` 外全部请求需 HTTP Basic 认证（用户名任意，密码填该值）。**不设置则接口完全公开** |
 | `ACCESS_REALM` | ⬜ | Basic 认证提示语，默认 `DOO Multi-Agent` |

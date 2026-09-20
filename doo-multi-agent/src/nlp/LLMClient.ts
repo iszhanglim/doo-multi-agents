@@ -70,6 +70,7 @@ export class LLMClient {
         messages: [{ role: 'user', content: prompt }],
         temperature: this.config.temperature ?? 0.7,
         max_tokens: this.config.maxTokens ?? 2000,
+        ...(this.config.extraBody || {}),
       }),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT),
     });

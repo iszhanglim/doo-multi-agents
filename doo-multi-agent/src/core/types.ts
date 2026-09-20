@@ -179,6 +179,7 @@ export interface LLMConfig {
   model: string;
   temperature?: number;
   maxTokens?: number;
+  extraBody?: Record<string, unknown>;
 }
 
 export interface SystemConfig {
