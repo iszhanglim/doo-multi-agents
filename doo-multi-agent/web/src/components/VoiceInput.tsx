@@ -4,18 +4,66 @@ interface VoiceInputProps {
   onTranscript: (text: string, isFinal: boolean) => void;
 }
 
+const TARGET_SAMPLE_RATE = 16000;
+
+/** 线性重采样到 16kHz 单声道，编码 16-bit PCM WAV——ASR 原生格式，服务端无需转码 */
+function encodeWav(samples: Float32Array, inRate: number): Blob {
+  let pcm = samples;
+  if (Math.abs(inRate - TARGET_SAMPLE_RATE) > 1) {
+    const ratio = inRate / TARGET_SAMPLE_RATE;
+    const out = new Float32Array(Math.floor(samples.length / ratio));
+    for (let i = 0; i < out.length; i++) {
+      const t = i * ratio;
+      const j = Math.floor(t);
+      const cur = samples[j];
+      const next = samples[Math.min(j + 1, samples.length - 1)];
+      out[i] = cur + (next - cur) * (t - j);
+    }
+    pcm = out;
+  }
+  const buffer = new ArrayBuffer(44 + pcm.length * 2);
+  const view = new DataView(buffer);
+  const w = (offset: number, s: string) => {
+    for (let i = 0; i < s.length; i++) view.setUint8(offset + i, s.charCodeAt(i));
+  };
+  w(0, 'RIFF');
+  view.setUint32(4, 36 + pcm.length * 2, true);
+  w(8, 'WAVE');
+  w(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, TARGET_SAMPLE_RATE, true);
+  view.setUint32(28, TARGET_SAMPLE_RATE * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  w(36, 'data');
+  view.setUint32(40, pcm.length * 2, true);
+  let off = 44;
+  for (let i = 0; i < pcm.length; i++) {
+    const s = Math.max(-1, Math.min(1, pcm[i]));
+    view.setInt16(off, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+    off += 2;
+  }
+  return new Blob([view], { type: 'audio/wav' });
+}
+
 /**
- * 语音输入：本地录音（MediaRecorder）+ 服务端语音识别。
- * 不依赖浏览器 Web Speech API（该服务在国内网络下不可用）。
+ * 语音输入：Web Audio 采集 PCM 编码 WAV + 服务端语音识别。
+ * 不用 MediaRecorder（其产出 webm/mp4，服务端转码依赖 ffmpeg，部署环境不可用）。
  */
 const VoiceInput: React.FC<VoiceInputProps> = ({ onTranscript }) => {
   const [status, setStatus] = useState<'idle' | 'recording' | 'transcribing'>('idle');
   const [error, setError] = useState<string | null>(null);
   const [seconds, setSeconds] = useState(0);
 
-  const recorderRef = useRef<MediaRecorder | null>(null);
+  const ctxRef = useRef<AudioContext | null>(null);
+  const processorRef = useRef<ScriptProcessorNode | null>(null);
+  const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  const silentRef = useRef<GainNode | null>(null);
+  const pcmChunksRef = useRef<Float32Array[]>([]);
+  const sampleRateRef = useRef<number>(TARGET_SAMPLE_RATE);
   const streamRef = useRef<MediaStream | null>(null);
-  const chunksRef = useRef<Blob[]>([]);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const mountedRef = useRef(true);
 
@@ -24,9 +72,25 @@ const VoiceInput: React.FC<VoiceInputProps> = ({ onTranscript }) => {
       clearInterval(timerRef.current);
       timerRef.current = null;
     }
+    if (processorRef.current) {
+      processorRef.current.disconnect();
+      processorRef.current = null;
+    }
+    if (sourceRef.current) {
+      sourceRef.current.disconnect();
+      sourceRef.current = null;
+    }
+    if (silentRef.current) {
+      silentRef.current.disconnect();
+      silentRef.current = null;
+    }
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(t => t.stop());
       streamRef.current = null;
+    }
+    if (ctxRef.current) {
+      void ctxRef.current.close().catch(() => { /* 已关闭 */ });
+      ctxRef.current = null;
     }
   }, []);
 
@@ -35,9 +99,6 @@ const VoiceInput: React.FC<VoiceInputProps> = ({ onTranscript }) => {
     return () => {
       mountedRef.current = false;
       cleanupRecording();
-      if (recorderRef.current && recorderRef.current.state !== 'inactive') {
-        try { recorderRef.current.stop(); } catch { /* 已停止 */ }
-      }
     };
   }, [cleanupRecording]);
 
@@ -47,7 +108,7 @@ const VoiceInput: React.FC<VoiceInputProps> = ({ onTranscript }) => {
       // 直接以原始二进制发送音频（不用 FormData，避免 multipart 信封破坏音频数据）
       const res = await fetch('/api/stt', {
         method: 'POST',
-        headers: { 'Content-Type': blob.type || 'audio/webm' },
+        headers: { 'Content-Type': 'audio/wav' },
         body: blob,
       });
       const data = await res.json().catch(() => ({}));
@@ -67,36 +128,54 @@ const VoiceInput: React.FC<VoiceInputProps> = ({ onTranscript }) => {
     }
   }, [onTranscript]);
 
-  const handleStopped = useCallback(() => {
+  const finishRecording = useCallback(() => {
     cleanupRecording();
-    const blob = new Blob(chunksRef.current, { type: recorderRef.current?.mimeType || 'audio/webm' });
-    if (blob.size < 3000) {
+    const rate = sampleRateRef.current;
+    const total = pcmChunksRef.current.reduce((n, c) => n + c.length, 0);
+    if (total < rate) {
       setError('录音太短，请重试');
       setStatus('idle');
       return;
     }
-    transcribe(blob);
+    const merged = new Float32Array(total);
+    let off = 0;
+    for (const c of pcmChunksRef.current) {
+      merged.set(c, off);
+      off += c.length;
+    }
+    pcmChunksRef.current = [];
+    transcribe(encodeWav(merged, rate));
   }, [cleanupRecording, transcribe]);
 
   const startRecording = useCallback(async () => {
     setError(null);
-    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+    const Ctx = window.AudioContext
+      || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!navigator.mediaDevices?.getUserMedia || !Ctx) {
       setError('当前浏览器不支持录音，请使用Chrome或Edge');
       return;
     }
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
-      const candidates = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4'];
-      const mimeType = candidates.find(t => MediaRecorder.isTypeSupported(t));
-      const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
-      chunksRef.current = [];
-      recorder.ondataavailable = (e: BlobEvent) => {
-        if (e.data.size > 0) chunksRef.current.push(e.data);
+      const ctx = new Ctx();
+      ctxRef.current = ctx;
+      sampleRateRef.current = ctx.sampleRate;
+      pcmChunksRef.current = [];
+      const source = ctx.createMediaStreamSource(stream);
+      sourceRef.current = source;
+      const processor = ctx.createScriptProcessor(4096, 1, 1);
+      processorRef.current = processor;
+      processor.onaudioprocess = (e: AudioProcessingEvent) => {
+        pcmChunksRef.current.push(new Float32Array(e.inputBuffer.getChannelData(0)));
       };
-      recorder.onstop = handleStopped;
-      recorderRef.current = recorder;
-      recorder.start(500);
+      // 静音增益接 destination：驱动处理循环但避免麦克风回放外放
+      const silent = ctx.createGain();
+      silent.gain.value = 0;
+      silentRef.current = silent;
+      source.connect(processor);
+      processor.connect(silent);
+      silent.connect(ctx.destination);
       setStatus('recording');
       setSeconds(0);
       timerRef.current = setInterval(() => setSeconds(s => s + 1), 1000);
@@ -108,13 +187,13 @@ const VoiceInput: React.FC<VoiceInputProps> = ({ onTranscript }) => {
       setStatus('idle');
       cleanupRecording();
     }
-  }, [handleStopped, cleanupRecording]);
+  }, [cleanupRecording]);
 
   const stopRecording = useCallback(() => {
-    if (recorderRef.current && recorderRef.current.state === 'recording') {
-      recorderRef.current.stop();
+    if (ctxRef.current) {
+      finishRecording();
     }
-  }, []);
+  }, [finishRecording]);
 
   const handleToggle = useCallback(() => {
     if (status === 'recording') stopRecording();

@@ -155,9 +155,11 @@ CREATE TABLE IF NOT EXISTS users (
   `audio/mpeg` 二进制（响应结构不变，前端零改动）。音色固定为
   `saturn_zh_male_shuanglangshaonian_tob`（开朗少年声）；前端传入的 edge-tts
   `voice` 参数被忽略，`rate`（如 `+5%`）映射为 `speechRate`。
-- `/api/stt`：保留魔数嗅探 `detectAudioExt`；托管 ASR 只支持 wav/mp3/ogg/m4a，
-  **webm（Chrome MediaRecorder 默认格式）先用 ffmpeg 转 16k 单声道 wav**
-  再 base64 传 `ASRClient.recognize`。响应仍为 `{ok, text, error}`。
+- `/api/stt`：保留魔数嗅探 `detectAudioExt`；托管 ASR 只支持 wav/mp3/ogg/m4a。
+  **前端不再用 MediaRecorder**（2026-09-21 起）：`VoiceInput.tsx` 改用 Web Audio
+  采集 PCM → 线性重采样 16kHz → 编码 16-bit WAV 直传，服务端对主路径零转码依赖
+  ——**部署环境没有 ffmpeg 也能用**（线上曾因 `spawn ffmpeg ENOENT` 报 500）。
+  服务端 webm→ffmpeg 转码分支保留作兼容兜底。响应仍为 `{ok, text, error}`。
 - `web/server/stt_worker.py` 及 whisper worker 基建已随迁移删除。
 
 ## 8. 部署后验证清单
