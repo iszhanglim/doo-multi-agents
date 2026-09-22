@@ -164,6 +164,12 @@ CREATE TABLE IF NOT EXISTS users (
   2026-09-22 由开朗少年声换为童声，**托管音色池中唯一男孩童声**——mars 系等其他
   童声 ID 实测均报 resource ID mismatch）；前端传 `rate:'+12%'`（语速稍快求活泼），
   `rate`（如 `+12%`）映射为 `speechRate`。
+- **童声进一步幼态化（2026-09-22）**：前端 `VoiceOutput.tsx` 播放管线改用
+  Web Audio `BufferSource.detune = +300 音分`（抬 3 个半音，变速不变调），
+  把托管男童声再推幼一档；detune 不可用时回落原 `<audio>` 播放，服务端
+  TTS 失败再降级 speechSynthesis（pitch 1.5）。**注意：托管引擎对 SSML
+  `<prosody>`（任何属性，含 pitch/volume/rate）有慢放 bug**——5 秒文本会被
+  拉长到 40~55 秒，`<speak>` 纯包装则正常；不要用 SSML prosody 调音调。
 - `/api/stt`：保留魔数嗅探 `detectAudioExt`；托管 ASR 只支持 wav/mp3/ogg/m4a。
   **前端不再用 MediaRecorder**（2026-09-21 起）：`VoiceInput.tsx` 改用 Web Audio
   采集 PCM → 线性重采样 16kHz → 编码 16-bit WAV 直传，服务端对主路径零转码依赖
