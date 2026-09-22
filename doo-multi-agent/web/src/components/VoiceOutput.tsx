@@ -6,10 +6,7 @@ interface VoiceOutputProps {
 }
 
 const TTS_URL = '/api/tts';
-const VOICE = 'zh-CN-YunxiaNeural'; // 微软 Yunxia 可爱男童声
-// Web Audio 变调（单位：音分）。+300 ≈ 抬高 3 个半音，把托管男童声进一步推向
-// 大班男孩的奶声奶气感；detune 只变调不变速，语速仍由服务端 speechRate 控制。
-const CHILD_DETUNE_CENTS = 300;
+const VOICE = 'zh-CN-YunxiaNeural'; // 微软 Yunxia 可爱男童声（浏览器降级兜底）
 
 interface WebAudioPlayback {
   ctx: AudioContext;
@@ -85,14 +82,14 @@ const VoiceOutput: React.FC<VoiceOutputProps> = ({ text, autoPlay = true }) => {
       const res = await fetch(TTS_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, voice: VOICE, rate: '+12%' }), // 语速稍快，大班男孩活泼感
+        body: JSON.stringify({ text, voice: VOICE, rate: '0%' }), // 奶气萌娃原声足够自然，不额外提速
       });
       if (!res.ok) throw new Error(`TTS ${res.status}`);
 
       const blob = await res.blob();
 
-      // 火山原生童声（奶气萌娃等）本身足够幼态，不再叠加变调；仅托管音色做 +300 音分幼化
-      const detune = res.headers.get('X-TTS-Provider') === 'volc' ? 0 : CHILD_DETUNE_CENTS;
+      // 奶气萌娃等大模型童声本身足够幼态自然，不再叠加变调/变速
+      const detune = 0;
       const playback = await playDetunedChildVoice(blob, detune, () => {
         setIsSpeaking(false);
         webAudioRef.current = null;
@@ -124,8 +121,8 @@ const VoiceOutput: React.FC<VoiceOutputProps> = ({ text, autoPlay = true }) => {
       if (typeof window !== 'undefined' && window.speechSynthesis) {
         const utter = new SpeechSynthesisUtterance(text);
         utter.lang = 'zh-CN';
-        utter.rate = 1.12;
-        utter.pitch = 1.5; // 提高音调，贴近男童声
+        utter.rate = 1.0;
+        utter.pitch = 1.3; // 浏览器降级语音稍提 pitch 贴近男童
         utter.onend = () => setIsSpeaking(false);
         utter.onerror = () => setIsSpeaking(false);
         window.speechSynthesis.speak(utter);

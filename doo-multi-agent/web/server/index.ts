@@ -915,7 +915,7 @@ import { TTSClient, ASRClient, Config, HeaderUtils } from 'coze-coding-dev-sdk';
 const execFileAsync = promisify(execFile);
 const ttsCacheDir = join(tmpdir(), 'doo-tts');
 mkdirSync(ttsCacheDir, { recursive: true });
-const TTS_SPEAKER = 'saturn_zh_male_tiancaitongzhuo_tob'; // 托管音色：天才同桌男童声，贴合"多多"幼儿伙伴设定
+const TTS_SPEAKER = 'zh_male_naiqimengwa_uranus_bigtts'; // 托管音色：奶气萌娃 2.0（剪映/豆包同款男童声，大班男孩可爱音）
 
 // 火山引擎 TTS（剪映同款音色源）。配置了 AppID/Token 即优先走火山原生，
 // 未配置或合成失败时回落平台托管 TTS。剪映男童声候选（官方音色列表 6561/1257544）：

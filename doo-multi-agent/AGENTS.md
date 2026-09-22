@@ -159,30 +159,25 @@ CREATE TABLE IF NOT EXISTS users (
 （`coze-coding-dev-sdk` 的 `TTSClient` / `ASRClient`），不再依赖本地 venv：
 
 - `/api/tts`：`TTSClient.synthesize` → 下载 mp3 → 落盘缓存（`/tmp/doo-tts`）后返回
-  `audio/mpeg` 二进制（响应结构不变，前端零改动）。音色固定为
-  `saturn_zh_male_tiancaitongzhuo_tob`（天才同桌男童声，贴合"多多"大班男孩设定；
-  2026-09-22 由开朗少年声换为童声，**托管音色池中唯一男孩童声**——mars 系等其他
-  童声 ID 实测均报 resource ID mismatch）；前端传 `rate:'+12%'`（语速稍快求活泼），
-  `rate`（如 `+12%`）映射为 `speechRate`。
-- **童声进一步幼态化（2026-09-22）**：前端 `VoiceOutput.tsx` 播放管线改用
-  Web Audio `BufferSource.detune = +300 音分`（抬 3 个半音，变速不变调），
-  把托管男童声再推幼一档；detune 不可用时回落原 `<audio>` 播放，服务端
-  TTS 失败再降级 speechSynthesis（pitch 1.5）。**注意：托管引擎对 SSML
-  `<prosody>`（任何属性，含 pitch/volume/rate）有慢放 bug**——5 秒文本会被
-  拉长到 40~55 秒，`<speak>` 纯包装则正常；不要用 SSML prosody 调音调。
-- **火山引擎 TTS provider（2026-09-22 接入，等凭证启用）**：`.env` 配置
+  `audio/mpeg` 二进制（响应结构不变，前端零改动）。**2026-09-23 默认音色已切为
+  `zh_male_naiqimengwa_uranus_bigtts`（奶气萌娃 2.0，剪映/豆包同款男童声）**——
+  该音色属 uranus 大模型集群，托管 TTS 原生支持（之前漏测 `_uranus_bigtts` 后缀
+  误以为只有火山原生才可用，后续探测确认托管池可用）；前端传 `rate:'0%'`，
+  不加额外 detune（萌娃原声自然可爱），`rate` 映射为 `speechRate`。
+- **童声方案演进历史（供后续参考，勿回退）**：
+  - 初始：`saturn_zh_male_shuanglangshaonian_tob`（开朗少年，偏成熟）
+  - 一轮：`saturn_zh_male_tiancaitongzhuo_tob`（天才同桌，托管池内幼度第二）+
+    前端 Web Audio detune +300 音分 + 语速 +12% 补幼感
+  - 当前：奶气萌娃 2.0（uranus 大模型，托管池直接可用，最萌）+ 原声播放
+    （detune/提速都去掉，避免把男童变女童感）
+  - **托管引擎 SSML `<prosody>` 有慢放 bug**：5 秒文本会被拉长到 40~55 秒，
+    不要用 SSML prosody 调 pitch/rate/volume。
+- **火山引擎 TTS provider（2026-09-22 接入，可选增强）**：`.env` 配置
   `VOLC_TTS_APPID` + `VOLC_TTS_TOKEN` 后自动优先走火山 v1 HTTP 非流式接口
   （`openspeech.bytedance.com/api/v1/tts`，Header `Bearer;{token}`，响应
-  JSON `data` 为 base64 mp3，`code===3000` 为成功），音色默认剪映同款
-  **奶气萌娃 2.0** `zh_male_naiqimengwa_uranus_bigtts`（`VOLC_TTS_VOICE` 可换），
-  备选天才童声/开朗弟弟 2.0。失败自动回落托管 TTS。响应头 `X-TTS-Provider`
-  告知前端 provider：`volc` 时前端不叠加 detune（原生音色已足够幼态），
-  `coze` 时前端 detune +300。音色与托管池无关——托管 TTS 白名单里没有
-  剪映音色，实测 mars 系全部报 resource ID mismatch。**「奶气萌娃」在托管池
-  已穷尽实测不存在**（saturn_zh_male_naiqimengwa_tob / zh_male_naiqimengwa_
-  saturn_bigtts 均报 mismatch，而 README 在列对照组 dayi/xueayi 全部成功），
-  托管池完整白名单=README 的 13 个音色；男孩童声仅天才同桌（最萌）、开朗少年
-  两个。
+  JSON `data` 为 base64 mp3，`code===3000` 为成功），音色默认奶气萌娃
+  （同托管默认，只是走火山原生链路可避免托管额度/限速问题），`VOLC_TTS_VOICE`
+  可换其他剪映大模型音色。失败自动回落托管 TTS。
 - `/api/stt`：保留魔数嗅探 `detectAudioExt`；托管 ASR 只支持 wav/mp3/ogg/m4a。
   **前端不再用 MediaRecorder**（2026-09-21 起）：`VoiceInput.tsx` 改用 Web Audio
   采集 PCM → 线性重采样 16kHz → 编码 16-bit WAV 直传，服务端对主路径零转码依赖
