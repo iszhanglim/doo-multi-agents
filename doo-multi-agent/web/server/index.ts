@@ -380,7 +380,10 @@ app.get('/api/portrait/:childId', async (req, res) => {
 // 获取所有画像
 app.get('/api/portraits', async (req, res) => {
   try {
-    const portraits = await system.portraitStorage.loadAllPortraits();
+    let portraits = await system.portraitStorage.loadAllPortraits();
+    // 班级老师只看本班学生；admin（无 classId）看全部
+    const classId = typeof req.query.classId === 'string' ? req.query.classId.trim() : '';
+    if (classId) portraits = portraits.filter((p) => p.classId === classId);
     res.json({ success: true, portraits });
   } catch (error) {
     res.status(500).json({ error: '获取画像列表失败', message: (error as Error).message });
@@ -428,7 +431,10 @@ app.delete('/api/portrait/:childId', async (req, res) => {
 // 获取统计数据
 app.get('/api/stats', async (req, res) => {
   try {
-    const portraits = await system.portraitStorage.loadAllPortraits();
+    let portraits = await system.portraitStorage.loadAllPortraits();
+    // 与 /api/portraits 同口径：班级老师只统计本班学生
+    const classId = typeof req.query.classId === 'string' ? req.query.classId.trim() : '';
+    if (classId) portraits = portraits.filter((p) => p.classId === classId);
 
     // 幼儿总数
     const totalChildren = portraits.length;
@@ -909,7 +915,7 @@ import { TTSClient, ASRClient, Config, HeaderUtils } from 'coze-coding-dev-sdk';
 const execFileAsync = promisify(execFile);
 const ttsCacheDir = join(tmpdir(), 'doo-tts');
 mkdirSync(ttsCacheDir, { recursive: true });
-const TTS_SPEAKER = 'saturn_zh_male_shuanglangshaonian_tob'; // 托管音色：开朗少年声，替代原本地 edge-tts 童声
+const TTS_SPEAKER = 'saturn_zh_male_tiancaitongzhuo_tob'; // 托管音色：天才同桌男童声，贴合"多多"幼儿伙伴设定
 
 /** TTS 缓存有效期。沙箱磁盘仅 3GB，缓存必须可回收（原先只写不删） */
 const TTS_CACHE_TTL_MS = (Number(process.env.TTS_CACHE_TTL_HOURS) || 24) * 60 * 60 * 1000;

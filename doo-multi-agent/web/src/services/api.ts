@@ -55,9 +55,11 @@ export const api = {
   getPortrait: (childId: string) =>
     fetchApi<{ success: boolean; portrait: ChildPortrait }>(`/portrait/${childId}`),
 
-  // 获取所有画像
-  getPortraits: () =>
-    fetchApi<{ success: boolean; portraits: ChildPortrait[] }>('/portraits'),
+  // 获取所有画像（带班级过滤；admin 不传看全部）
+  getPortraits: (classId?: string) =>
+    fetchApi<{ success: boolean; portraits: ChildPortrait[] }>(
+      classId ? `/portraits?classId=${encodeURIComponent(classId)}` : '/portraits',
+    ),
 
   // 生成雷达图
   getRadar: (childId: string) =>
@@ -67,9 +69,11 @@ export const api = {
   getReport: (childId: string) =>
     fetchApi<{ success: boolean; report: string }>(`/report/${childId}`),
 
-  // 获取统计数据
-  getStats: () =>
-    fetchApi<{ success: boolean; stats: { totalChildren: number; todayCount: number; classCount: number; avgLevel: number } }>('/stats'),
+  // 获取统计数据（带班级过滤；admin 不传看全部）
+  getStats: (classId?: string) =>
+    fetchApi<{ success: boolean; stats: { totalChildren: number; todayCount: number; classCount: number; avgLevel: number } }>(
+      classId ? `/stats?classId=${encodeURIComponent(classId)}` : '/stats',
+    ),
 
   // 删除幼儿画像
   deletePortrait: (childId: string) =>
