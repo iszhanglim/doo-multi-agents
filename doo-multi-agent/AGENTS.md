@@ -95,6 +95,9 @@ npm start            # = cd web && npx tsx server/index.ts
   **不改 `PostgresStorage.ts` / `src/index.ts` 业务逻辑。**
 - 已按下文 SQL 在平台托管的 PostgreSQL（库 `postgres`）中建好 `portraits` 与 `users` 两张表（`CREATE TABLE IF NOT EXISTS`）。
 - 已验证：`/api/assess` 写入的画像真实落库到 `portraits`；`/api/auth/login` 返回 `classId` 证明走 `users` 表（JSON 模式不返回该字段）。
+- **班级过滤（2026-09-22 起）**：`/api/portraits` 与 `/api/stats` 支持 `?classId=` 查询参数过滤；
+  前端 `usePortraits` / `useStats` 自动取登录老师（`AuthContext.user.classId`）的班级带参请求——
+  老师只看到本班学生，admin（无 classId）与未登录仍看全部。
 - 本地无数据库注入时，`DATABASE_URL` 为空 → 自动回落 JSON 文件存储，不影响预览启动。
 
 > 表结构与 `src/portrait/PostgresStorage.ts` 的 `init()` 完全一致，可直接执行：
@@ -157,7 +160,8 @@ CREATE TABLE IF NOT EXISTS users (
 
 - `/api/tts`：`TTSClient.synthesize` → 下载 mp3 → 落盘缓存（`/tmp/doo-tts`）后返回
   `audio/mpeg` 二进制（响应结构不变，前端零改动）。音色固定为
-  `saturn_zh_male_shuanglangshaonian_tob`（开朗少年声）；前端传入的 edge-tts
+  `saturn_zh_male_tiancaitongzhuo_tob`（天才同桌男童声，贴合"多多"幼儿伙伴设定；
+  2026-09-22 由开朗少年声换为童声）；前端传入的 edge-tts
   `voice` 参数被忽略，`rate`（如 `+5%`）映射为 `speechRate`。
 - `/api/stt`：保留魔数嗅探 `detectAudioExt`；托管 ASR 只支持 wav/mp3/ogg/m4a。
   **前端不再用 MediaRecorder**（2026-09-21 起）：`VoiceInput.tsx` 改用 Web Audio
