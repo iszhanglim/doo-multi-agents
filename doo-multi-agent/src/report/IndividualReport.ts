@@ -16,7 +16,15 @@ export interface IndividualReport {
 /** 维度小结文本 */
 function getDimensionSummary(dims: DOOAssessment['dimensions']): string {
   const dictionAvg = ((dims.diction.vocabulary + dims.diction.sentenceStructure) / 2).toFixed(1);
-  const orgAvg = ((dims.organization.narrativeStructure + dims.organization.themeRelevance + dims.organization.eventExpansion + dims.organization.expressiveness) / 4).toFixed(1);
+  // 组织维度共 5 个观测点，此前漏了 timeMarker（只除 4），与 DOOModel.calculateDimensionAverage 口径不一致
+  const orgAvg = (
+    (dims.organization.narrativeStructure +
+      dims.organization.timeMarker +
+      dims.organization.themeRelevance +
+      dims.organization.eventExpansion +
+      dims.organization.expressiveness) /
+    5
+  ).toFixed(1);
   const opinionAvg = dims.opinion.narrativeViewpoint.toFixed(1);
   return `词句维度${dictionAvg}分，组织维度${orgAvg}分，观点维度${opinionAvg}分。`;
 }

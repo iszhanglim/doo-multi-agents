@@ -281,6 +281,15 @@ export class TeacherAgent extends Agent {
     return { message, suggestEnd };
   }
 
+  /** 以本 Agent 的人设与温度调用 LLM（systemPrompt / temperature 此前是死配置，从未下发） */
+  private async callLLM(prompt: string): Promise<string> {
+    return this.llmClient!.complete(prompt, {
+      system: this.config.systemPrompt,
+      temperature: this.config.temperature,
+      model: this.config.model,
+    });
+  }
+
   private async generateLLMTurnResponse(
     history: Array<{ role: 'child' | 'peer'; content: string }>,
     scenario: ScenarioType,
@@ -311,7 +320,7 @@ ${dialogueHistory}
 
 请用温柔、亲切、适合5-6岁孩子的语言，直接回复一句话（不超过50字），不要加引号或解释：`;
 
-    const response = await this.llmClient!.complete(prompt);
+    const response = await this.callLLM(prompt);
     return response.trim().replace(/^["「]|["」]$/g, '').slice(0, 80);
   }
 

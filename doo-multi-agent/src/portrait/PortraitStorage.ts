@@ -43,10 +43,22 @@ export class PortraitStorage implements IPortraitStorage {
     return path.join(this.dataDir, `class_${this.sanitizeId(classId)}.json`);
   }
 
+  /**
+   * 原子写：先写临时文件再 rename。
+   * 直接 `writeFile` 在进程中断时会留下半截 JSON，也会让并发读侧读到空文件。
+   * 临时文件名带 pid + 随机后缀，避免同进程内并发写互相覆盖。
+   */
+  private async writeAtomic(filePath: string, data: string): Promise<void> {
+    const tmpPath = `${filePath}.${process.pid}.${Date.now().toString(36)}${Math.random()
+      .toString(36)
+      .slice(2, 8)}.tmp`;
+    await fs.writeFile(tmpPath, data, 'utf-8');
+    await fs.rename(tmpPath, filePath);
+  }
+
   async savePortrait(portrait: ChildPortrait): Promise<void> {
     const filePath = this.getPortraitPath(portrait.childId);
-    const data = JSON.stringify(portrait, null, 2);
-    await fs.writeFile(filePath, data, 'utf-8');
+    await this.writeAtomic(filePath, JSON.stringify(portrait, null, 2));
   }
 
   async loadPortrait(childId: string): Promise<ChildPortrait | null> {
@@ -111,8 +123,7 @@ export class PortraitStorage implements IPortraitStorage {
 
   async saveClassGroup(group: ClassPortraitGroup): Promise<void> {
     const filePath = this.getClassPath(group.classId);
-    const data = JSON.stringify(group, null, 2);
-    await fs.writeFile(filePath, data, 'utf-8');
+    await this.writeAtomic(filePath, JSON.stringify(group, null, 2));
   }
 
   async loadClassGroup(classId: string): Promise<ClassPortraitGroup | null> {
@@ -144,10 +155,15 @@ export class PortraitStorage implements IPortraitStorage {
 
   async importFromJSON(jsonData: string): Promise<number> {
     try {
-      const data = JSON.parse(jsonData);
-      const portraits = data.portraits as ChildPortrait[];
+      const data: unknown = JSON.parse(jsonData);
+      const portraits = (data as { portraits?: unknown } | null)?.portraits;
+      // 原先直接 `data.portraits as ChildPortrait[]` 纯断言，畸形数据会静默污染库
+      if (!Array.isArray(portraits)) {
+        console.error('Failed to import portraits: JSON 中缺少 portraits 数组');
+        return 0;
+      }
 
-      for (const portrait of portraits) {
+      for (const portrait of portraits as ChildPortrait[]) {
         await this.savePortrait(portrait);
       }
 

@@ -6,12 +6,12 @@ PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 cd "$PROJECT_DIR"
 
-# 加载本地环境变量（.env 已 gitignore 不入库；生产环境变量由平台注入）
-if [ -f "$PROJECT_DIR/.env" ]; then
-  set -a
-  . "$PROJECT_DIR/.env"
-  set +a
-fi
+# 说明：这里刻意不 source .env。
+#   `. .env` 等于把该文件当 shell 脚本执行（任意代码执行面）；
+#   而且未加引号的 JSON 值（如 LLM_EXTRA_BODY={"thinking":{"type":"disabled"}}）
+#   会被 shell 解析，极易踩坑；`set -a` 还会把 .env 里的一切（含误写的 PATH）导出。
+# .env 统一交给 web/server/index.ts 里的 dotenv 加载：config({ path: resolve(__dirname, '../../.env') })。
+# 若确实需要在 shell 侧先取少量变量（如端口），请逐行解析并显式 export，不要 eval。
 
 EXPOSE_PORT=$(awk -F '[ =]+' '/^expose_port/ {gsub(/[^0-9]/, "", $2); print $2; exit}' .preview 2>/dev/null || echo 5000)
 export PORT="$EXPOSE_PORT"

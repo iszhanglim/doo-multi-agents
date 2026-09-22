@@ -17,22 +17,26 @@ ENV NODE_ENV=production \
 
 WORKDIR /app
 
+# 仓库使用 pnpm（root 与 web 各一份 pnpm-lock.yaml，已无 package-lock.json）。
+# 通过 corepack 启用 pnpm，保证与平台/CI 一致的依赖解析结果。
+RUN corepack enable
+
 # ---- 1) 根依赖（tsx / pg / openai / bcrypt / dotenv / uuid） ----------------
-# 优先用 lock 做可复现安装；lock 与 package.json 失配时退回 install
-COPY package.json package-lock.json ./
-RUN npm ci --no-audit --no-fund \
- || npm install --no-audit --no-fund
+# 注意：仓库里已没有 package-lock.json，此前 `COPY package-lock.json` 会直接构建失败。
+COPY package.json pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile --prod=false \
+ || pnpm install --prod=false
 
 # ---- 2) 前端依赖（express / cors / body-parser / react / vite / tsx） -----
-COPY web/package.json web/package-lock.json ./web/
+COPY web/package.json web/pnpm-lock.yaml ./web/
 RUN cd web \
- && (npm ci --no-audit --no-fund || npm install --no-audit --no-fund)
+ && (pnpm install --frozen-lockfile || pnpm install)
 
 # ---- 3) 源码（.dockerignore 已排除 node_modules / .env / dist / venv） -----
 COPY . .
 
 # ---- 4) 构建前端 -> web/dist，交由后端静态托管 ----------------------------
-RUN cd web && npm run build
+RUN cd web && pnpm run build
 
 EXPOSE 3001
 

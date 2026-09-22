@@ -42,7 +42,8 @@ export class PostgresStorage implements IPortraitStorage {
         [username, passwordHash, name, role, classId || null, avatar]
       );
       return true;
-    } catch {
+    } catch (error) {
+      console.error(`创建用户失败（username=${username}）:`, error instanceof Error ? error.message : error);
       return false;
     }
   }
@@ -57,16 +58,24 @@ export class PostgresStorage implements IPortraitStorage {
     return result.rows;
   }
 
+  /**
+   * 允许被更新的列白名单。
+   * `updateUser` 会把列名拼进 SQL 语句（无法参数化标识符），因此列名绝不能来自调用方的任意键。
+   */
+  private static readonly UPDATABLE_USER_FIELDS = new Set(['name', 'role', 'class_id', 'avatar']);
+
   async updateUser(username: string, updates: { name?: string; role?: string; class_id?: string; avatar?: string }): Promise<boolean> {
     const fields: string[] = [];
-    const values: any[] = [];
+    const values: unknown[] = [];
     let idx = 1;
     for (const [key, val] of Object.entries(updates)) {
-      if (val !== undefined) {
-        fields.push(`${key} = $${idx}`);
-        values.push(val);
-        idx++;
+      if (val === undefined) continue;
+      if (!PostgresStorage.UPDATABLE_USER_FIELDS.has(key)) {
+        throw new Error(`不允许更新的用户字段: ${key}`);
       }
+      fields.push(`${key} = $${idx}`);
+      values.push(val);
+      idx++;
     }
     if (fields.length === 0) return false;
     values.push(username);
@@ -139,12 +148,19 @@ export class PostgresStorage implements IPortraitStorage {
 
   async importFromJSON(jsonData: string): Promise<number> {
     try {
-      const data = JSON.parse(jsonData);
-      for (const portrait of data.portraits as ChildPortrait[]) {
+      const data: unknown = JSON.parse(jsonData);
+      const portraits = (data as { portraits?: unknown } | null)?.portraits;
+      // 原先直接 `data.portraits as ChildPortrait[]` 纯断言，畸形数据会静默污染库
+      if (!Array.isArray(portraits)) {
+        console.error('导入画像失败：JSON 中缺少 portraits 数组');
+        return 0;
+      }
+      for (const portrait of portraits as ChildPortrait[]) {
         await this.savePortrait(portrait);
       }
-      return data.portraits.length;
-    } catch {
+      return portraits.length;
+    } catch (error) {
+      console.error('导入画像失败:', error instanceof Error ? error.message : error);
       return 0;
     }
   }
@@ -162,7 +178,8 @@ export class PostgresStorage implements IPortraitStorage {
         a.timestamp = new Date(a.timestamp);
       }
       return portrait;
-    } catch {
+    } catch (error) {
+      console.warn('画像数据解析失败，已跳过该条:', error instanceof Error ? error.message : error);
       return null;
     }
   }

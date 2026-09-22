@@ -129,14 +129,18 @@ CREATE TABLE IF NOT EXISTS users (
 | `LLM_MODEL` | ⬜ | coze 托管默认 `doubao-seed-2-0-pro-260215`；当前 `.env` 为 `deepseek-flash` |
 | `LLM_API_KEY` | 仅 openai/custom 必填 | DeepSeek 密钥（沙箱放 gitignored 的 `.env`；生产配到平台环境变量，禁止硬编码/入库） |
 | `LLM_BASE_URL` | 仅 openai/custom 必填 | 完整 endpoint：`https://api.deepseek.com/chat/completions`（`callOpenAI`/`callCustom` 都把它当完整 URL 直接 fetch） |
-| `LLM_EXTRA_BODY` | ⬜ | JSON 透传到请求体的额外字段（`LLMConfig.extraBody`）。**DeepSeek 思考模型必配 `{"thinking":{"type":"disabled"}}`**，否则思考耗尽 max_tokens 导致 content 为空 |
-| `LLM_TIMEOUT_MS` | ⬜ | 单次 LLM 调用超时毫秒，默认 `60000` |
-| `LLM_TEMPERATURE` | ⬜ | `0.7` |
-| `LLM_MAX_TOKENS` | ⬜ | 默认 `2000`——**对思考型模型远远不够**，当前 `.env` 为 `8192` |
+| `LLM_EXTRA_BODY` | ⬜ | JSON 对象，透传到请求体的额外字段（`LLMConfig.extraBody`）。**DeepSeek 思考模型必配 `{"thinking":{"type":"disabled"}}`**，否则思考耗尽 max_tokens 导致 content 为空。保留键 `model` / `messages` 会被忽略（防静默改写请求语义）。**当前对 `openai` / `custom` / `anthropic` 生效，`coze` 路径（SDK 入参受限）不生效** |
+| `LLM_TIMEOUT_MS` | ⬜ | 单次 LLM 调用超时毫秒，默认 `30000`。平台无数据交互约 90s 断连，配合 2 次尝试建议不超过 30s |
+| `LLM_TEMPERATURE` | ⬜ | `0.7`。`0` 是合法值（可求确定性输出），实现已按「未设置才取默认」处理 |
+| `LLM_MAX_TOKENS` | ⬜ | 默认 `2000`——**对思考型模型远远不够**，当前 `.env` 为 `8192`。注意 `coze` 路径不传该参数 |
 | `DATABASE_URL` | ✅ 生产必填 | 从「数据库 → 设置」复制的连接串 |
-| `ACCESS_CODE` | ⚠️ **公网必填** | 共享访问口令。设置后除 `/api/health` 外全部请求需 HTTP Basic 认证（用户名任意，密码填该值）。**不设置则接口完全公开** |
+| `ACCESS_CODE` | ⚠️ **公网必填** | 站点级**共享**口令。设置后除 `/api/health` 外全部请求需 HTTP Basic 认证（用户名任意，密码填该值）。**不设置则站点完全公开**。注意它是全员同一个、**无法区分身份**，不承担授权职责 |
 | `ACCESS_REALM` | ⬜ | Basic 认证提示语，默认 `DOO Multi-Agent` |
+| `AUTH_SECRET` | ⬜ | 登录令牌（HMAC）签名密钥，默认复用 `ACCESS_CODE`；生产推荐单独设随机值 |
+| `AUTH_TOKEN_TTL_HOURS` | ⬜ | 登录令牌有效期（小时），默认 `12` |
 | `RATE_LIMIT_PER_MIN` | ⬜ | 每 IP 每分钟 `/api/*` 请求上限，默认 `120`；设 `0` 关闭限流 |
+| `RATE_LIMIT_GLOBAL_PER_MIN` | ⬜ | 全站每分钟上限（兜底），默认 `RATE_LIMIT_PER_MIN×10`。`X-Forwarded-For` 可伪造，这道闸才是保护 LLM 额度的关键 |
+| `TTS_CACHE_TTL_HOURS` | ⬜ | TTS 落盘缓存有效期（小时），默认 `24`；沙箱磁盘 3GB，缓存需可回收 |
 
 **LLM 接入说明（2026-09 新增）**：默认 provider 为 `coze`——通过 `coze-coding-dev-sdk` 的托管 LLM（`callCoze`），凭据平台自动注入，无需任何 key；`useLLM` 判定（`src/index.ts`）对 `coze` 恒为 true。LLM 调用失败会自动回退规则引擎（`AssessmentEngine.assess` 的 catch 分支），服务不中断。当前平台托管 LLM 账户「资源点不足」（需升级付费套餐/增购积分），故推理暂走规则兜底；充值后无需改代码立即生效。
 
@@ -182,23 +186,44 @@ curl -s -I $PUBLIC_URL/ | head -1
 
 ## 9. 安全与访问控制
 
-服务端已内置访问控制中间件（`web/server/index.ts` 文件头部，有明确的起止注释标记）：
+服务端访问控制位于 `web/server/index.ts` 文件头部（有明确的起止注释标记），分三层：
 
-- **未设 `ACCESS_CODE`**：所有接口完全公开（保持本地开发无感），启动时会打印告警。
-- **设了 `ACCESS_CODE`**：除 `/api/health` 外所有请求都需要 HTTP Basic 认证，
-  用户名任意，密码填 `ACCESS_CODE` 的值。浏览器首次访问页面会收到
-  `401 + WWW-Authenticate`，弹出原生登录框；认证通过后凭证被浏览器按
-  「同源 + realm」缓存，后续页面的 `fetch('/api/...')` 会自动携带
-  —— **前端代码无需任何改动**。
-- 内置按 IP 的滑动窗口**限流**（`RATE_LIMIT_PER_MIN`，默认 120/分钟），
-  超额返回 `429` 并带 `Retry-After`，可防止 LLM 额度被刷。
-- `OPTIONS` 预检请求放行，不影响 CORS。
+**第 1 层 · 站点口令（`ACCESS_CODE`）**
+
+- **未设**：所有接口完全公开（保持本地开发无感），启动时打印告警。
+- **设了**：除 `/api/health` 外所有请求都需要 HTTP Basic 认证，用户名任意、密码填该值。
+  浏览器首次访问收到 `401 + WWW-Authenticate` 弹出原生登录框；凭证按「同源 + realm」
+  缓存，后续 `fetch('/api/...')` 自动携带。
+- ⚠️ 这是**全员共享**口令，**无法区分身份**，因此只用于「是否放进站点」，不承担授权。
+
+**第 2 层 · 登录令牌 + 角色（授权）**
+
+- `POST /api/auth/login` 成功后签发 HMAC 签名令牌（载荷含 `username` / `role` / 过期时间），
+  密钥取 `AUTH_SECRET`（未设置则复用 `ACCESS_CODE`），有效期 `AUTH_TOKEN_TTL_HOURS`（默认 12h）。
+- 前端存 `localStorage`（键 `doo_token`），以**自定义头 `X-Auth-Token`** 回传
+  —— 用自定义头而非 `Authorization`，是为了不与浏览器缓存的 Basic 凭证互斥。
+- 管理类接口（`GET /api/auth/users`、`PATCH|DELETE /api/auth/user/:username`、
+  `POST /api/auth/user/:username/password`）要求 `role === 'admin'`；
+  `POST /api/auth/password` 要求令牌身份与目标账号一致（管理员可代改）。
+- 令牌无状态、可跨实例校验，不依赖内存会话。
+
+**第 3 层 · 两级限流**
+
+- 按 IP 滑窗：`RATE_LIMIT_PER_MIN`（默认 120/分钟）。
+- 全站滑窗：`RATE_LIMIT_GLOBAL_PER_MIN`（默认 `RATE_LIMIT_PER_MIN×10`）。
+  取 IP 依赖 `X-Forwarded-For`，网关未强制重写时可被伪造，**全站上限才是护住 LLM 额度的闸**。
+- 超额返回 `429` + `Retry-After`；`OPTIONS` 预检放行，不影响 CORS。
 
 **`/api/health` 必须保持公开**：平台用它做探活，一旦加鉴权会导致部署失败。
 
-> ⚠️ 前端那个登录页（`teacher1/123456`）只是客户端 localStorage 状态，**不构成安全防护**；
-> 真正的访问控制依赖上面的 `ACCESS_CODE`。
+**入参边界**（公开站点防滥用）：`/api/assess` 叙事 ≤2000 字；`/api/conversation/turn`
+单条发言 ≤500 字；`/api/tts` 文本 ≤500 字；`/api/stt` 上传 ≤16MB（与平台单文件上限对齐）；
+场景类型走白名单校验，非法值返回 400 而非 500。
+
+> 前端登录页本身不是安全边界，但它的登录结果会换取服务端令牌，
+> **授权已由服务端承担**，不再依赖前端 localStorage 状态。
 >
-> 已实测（2026-09-16）：健康检查免鉴权 200 / 无凭证 401 且带 `WWW-Authenticate` /
-> 错口令 401 / 正确口令 200 / 25 次请求触发 429 / OPTIONS 非 401 /
-> 未设 `ACCESS_CODE` 时全部 200 放行。
+> ⚠️ 引入令牌与两级限流后，原先「2026-09-16 已实测」的那组鉴权/限流结论
+> **需要重新实测**（健康检查免鉴权 200 / 无凭证 401 / 错口令 401 / 正确口令 200 /
+> 限流 429 / `OPTIONS` 非 401 / 未设 `ACCESS_CODE` 时全部放行），
+> 并补测：无令牌访问 `/api/auth/users` 应 401、`teacher` 角色应 403、`admin` 应 200。

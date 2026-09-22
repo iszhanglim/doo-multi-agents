@@ -1,6 +1,12 @@
 /**
- * @deprecated 此为旧版Web服务器（端口3000），建议使用 Express 版本。
- * 运行方式：cd web && npm run server:dev（端口3001，配合 React 前端）
+ * @deprecated 旧版 Web 服务器（端口 3000），**已不再用于部署**。
+ *
+ * ⚠️ 该入口没有任何鉴权，且 CORS 允许任意来源（`Access-Control-Allow-Origin: *`），
+ *    请勿暴露到公网。为降低误用风险，默认只监听 127.0.0.1
+ *    （确需对外监听时显式设置 HOST=0.0.0.0，并自行承担风险）。
+ *
+ * 现行部署入口：`web/server/index.ts`（端口取 $PORT，含站点口令 + 登录令牌 + 角色授权 + 两级限流 + 静态托管）
+ * 本地起前端：`cd web && npm run server:dev`
  */
 import { createServer, IncomingMessage, ServerResponse } from 'http';
 import { readFile } from 'fs/promises';
@@ -306,8 +312,12 @@ async function main(): Promise<void> {
     });
   });
 
-  server.listen(PORT, () => {
-    console.log(`🌐 Web UI running at http://localhost:${PORT}`);
+  // 默认只绑回环：本入口没有任何鉴权，不应对外监听。
+  // 确需对外时显式设置 HOST=0.0.0.0，并自行承担风险。
+  const HOST = process.env.HOST || '127.0.0.1';
+  server.listen(PORT, HOST, () => {
+    console.log(`🌐 [已废弃入口] Web UI running at http://${HOST}:${PORT}`);
+    console.warn('⚠️  这是旧版无鉴权服务器（CORS 允许任意来源），请勿暴露到公网；生产入口为 web/server/index.ts');
   });
 
   const shutdown = () => {

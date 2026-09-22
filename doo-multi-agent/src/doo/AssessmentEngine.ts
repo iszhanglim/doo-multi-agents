@@ -1,6 +1,6 @@
 import { DOODimensions, DOOAssessment, Level, NarrativeInput } from '../core/types';
 import { DOOModel } from './DOOModel';
-import { LLMClient } from '../nlp/LLMClient';
+import { LLMClient, CompleteOptions } from '../nlp/LLMClient';
 import {
   splitSentences,
   extractWords,
@@ -17,13 +17,39 @@ export interface AssessmentResult {
   reasoning: string;
 }
 
+/** 简单时间连词（量表水平 1） */
+const SIMPLE_TIME_MARKERS: readonly string[] = ['当时', '然后', '现在', '接着', '后来'];
+/** 复杂时间标记（量表水平 3-5）；与 simple 存在重叠是量表本身如此（"后来"两者皆可） */
+const COMPLEX_TIME_MARKERS: readonly string[] = [
+  '从前', '后来', '直到', '为止', '一会儿', '其次',
+  '夜晚', '第二天', '早晨', '很多年以前', '很久以前',
+  '首先', '最后', '终于', '突然', '忽然',
+];
+/**
+ * 「连续使用较复杂时间标记」判定所用的子集。
+ * 排除「首先/最后/终于」——它们是收尾/顺序词，误计会高估时间线索水平。
+ */
+const REPEATED_COMPLEX_TIME_MARKERS: readonly string[] = COMPLEX_TIME_MARKERS.filter(
+  (m) => !['首先', '最后', '终于'].includes(m)
+);
+
+/** 统计一组关键词在文本中出现的总次数 */
+function countOccurrences(text: string, markers: readonly string[]): number {
+  if (markers.length === 0) return 0;
+  const re = new RegExp(markers.join('|'), 'g');
+  return (text.match(re) || []).length;
+}
+
 export class AssessmentEngine {
   private llmClient: LLMClient;
   private useLLM: boolean;
+  /** 调用级 LLM 参数（systemPrompt / temperature / model），由 ExpertAgent 按自身配置注入 */
+  private requestOptions: CompleteOptions;
 
-  constructor(llmClient: LLMClient, useLLM = true) {
+  constructor(llmClient: LLMClient, useLLM = true, requestOptions: CompleteOptions = {}) {
     this.llmClient = llmClient;
     this.useLLM = useLLM;
+    this.requestOptions = requestOptions;
   }
 
   async assess(narrativeInput: NarrativeInput): Promise<DOOAssessment> {
@@ -143,7 +169,7 @@ export class AssessmentEngine {
     // 水平1：默认，包含1个要素；水平2略（有2个要素但未串联）
 
     // 时间标记（5分制，基于《学前儿童叙事能力评定表》）
-    const complexTimeCount = (text.match(/从前|后来|直到|为止|一会儿|其次|夜晚|第二天|早晨|很多年以前|很久以前|突然|忽然/g) || []).length;
+    const complexTimeCount = countOccurrences(text, REPEATED_COMPLEX_TIME_MARKERS);
     if (timeMarkers.complex && complexTimeCount >= 3) {
       dimensions.organization.timeMarker = 5; // 水平5：灵活运用多种时间标记，时间线索完整
     } else if (timeMarkers.complex && complexTimeCount >= 2) {
@@ -228,7 +254,7 @@ export class AssessmentEngine {
 
   private async llmBasedAssessment(content: string): Promise<AssessmentResult> {
     const prompt = this.buildAssessmentPrompt(content);
-    const response = await this.llmClient.complete(prompt);
+    const response = await this.llmClient.complete(prompt, this.requestOptions);
     return this.parseLLMResponse(response);
   }
 
@@ -479,7 +505,7 @@ export class AssessmentEngine {
 }`;
 
     try {
-      const response = await this.llmClient.complete(prompt);
+      const response = await this.llmClient.complete(prompt, this.requestOptions);
       return this.parseLLMResponse(response);
     } catch {
       // 验证失败，取规则和首轮LLM的较高值
@@ -565,15 +591,8 @@ export class AssessmentEngine {
   // ========== 时间标记评估 ==========
 
   private detectTimeMarkers(text: string): { simple: boolean; complex: boolean } {
-    const simpleMarkers = ['当时', '然后', '现在', '接着', '后来'];
-    const complexMarkers = [
-      '从前', '后来', '直到', '为止', '一会儿', '其次',
-      '夜晚', '第二天', '早晨', '很多年以前', '很久以前',
-      '首先', '最后', '终于', '突然', '忽然',
-    ];
-
-    const simple = simpleMarkers.some(m => text.includes(m));
-    const complex = complexMarkers.some(m => text.includes(m));
+    const simple = SIMPLE_TIME_MARKERS.some(m => text.includes(m));
+    const complex = COMPLEX_TIME_MARKERS.some(m => text.includes(m));
 
     return { simple, complex };
   }

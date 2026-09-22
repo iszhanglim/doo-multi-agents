@@ -1,15 +1,40 @@
 import { SystemConfig } from '../core/types';
 
+/**
+ * 解析 `LLM_EXTRA_BODY`（JSON 透传到请求体的额外字段）。
+ * 结果按模块级缓存：`defaultConfig` 与 `loadConfig()` 都会调用本函数，
+ * 缓存可避免重复解析、以及非法值重复打印告警。
+ */
+let extraBodyCache: Record<string, unknown> | undefined;
+let extraBodyResolved = false;
+
 function parseExtraBody(): Record<string, unknown> | undefined {
-  const raw = process.env.LLM_EXTRA_BODY;
+  if (extraBodyResolved) return extraBodyCache;
+  extraBodyResolved = true;
+
+  const raw = process.env.LLM_EXTRA_BODY?.trim();
   if (!raw) return undefined;
+
   try {
-    const parsed = JSON.parse(raw);
-    return typeof parsed === 'object' && parsed !== null ? parsed : undefined;
+    const parsed: unknown = JSON.parse(raw);
+    // 数组也满足 `typeof === 'object'`，必须显式排除，否则会被展开成 {"0":…,"1":…} 混进请求体
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+      console.warn('LLM_EXTRA_BODY 必须是 JSON 对象（例如 {"thinking":{"type":"disabled"}}），已忽略');
+      return undefined;
+    }
+    extraBodyCache = parsed as Record<string, unknown>;
+    return extraBodyCache;
   } catch {
     console.warn('LLM_EXTRA_BODY 不是合法 JSON，已忽略');
     return undefined;
   }
+}
+
+/** 读取数值型环境变量：0 是合法值，不能被 `||` 兜底吞掉（temperature=0 需要确定性输出） */
+function envNumber(raw: string | undefined, fallback: number): number {
+  if (raw === undefined || raw.trim() === '') return fallback;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? parsed : fallback;
 }
 
 export const defaultConfig: SystemConfig = {
@@ -17,8 +42,8 @@ export const defaultConfig: SystemConfig = {
     provider: (process.env.LLM_PROVIDER as SystemConfig['llm']['provider']) || 'coze',
     apiKey: process.env.LLM_API_KEY || process.env.OPENAI_API_KEY || '',
     model: process.env.LLM_MODEL || 'doubao-seed-2-0-pro-260215',
-    temperature: Number(process.env.LLM_TEMPERATURE) || 0.7,
-    maxTokens: Number(process.env.LLM_MAX_TOKENS) || 2000,
+    temperature: envNumber(process.env.LLM_TEMPERATURE, 0.7),
+    maxTokens: envNumber(process.env.LLM_MAX_TOKENS, 2000),
     extraBody: parseExtraBody(),
   },
   storage: {
@@ -59,7 +84,9 @@ O（独白观点）：情感表达、叙事观点、表现性
 个体评估：基本信息 → DOO评分表 → 叙事表现描述 → 优势 → 发展建议 → 教师提示
 对比评估：两次评估信息 → 得分变化表 → 变化亮点 → 仍需支持 → 下阶段计划
 班级画像：样本信息 → 得分分布 → 共性优势 → 共性问题 → 分组建议 → 下阶段活动建议`,
-      model: 'gpt-4',
+      // 不再写死 model：统一由全局 LLM_MODEL 决定。
+      // （原先的 'gpt-4' 是与当前 DeepSeek 部署不匹配的历史残留，一旦生效会向 DeepSeek 请求 gpt-4 而报错。）
+      // temperature 与 systemPrompt 现在会真正下发到请求，见 LLMClient.complete(prompt, opts)。
       temperature: 0.3,
     },
     teacher: {
@@ -96,7 +123,6 @@ O（观点）：鼓励幼儿说出自己的感受、看法和理由。例："你
 
 ## 安全规则
 不涉及医疗、心理治疗、身体接触、隐私信息；出现幼儿安全风险信息时，提示幼儿去找带班教师；不替教师做教育决策，只提供支持。`,
-      model: 'gpt-3.5-turbo',
       temperature: 0.5,
     },
     peer: {
@@ -145,7 +171,6 @@ O（观点）：鼓励幼儿说出自己的感受、看法和理由。例："你
 2.幼儿园常见话题库（游戏、集体活动、区域活动、动物、家人、节日、季节等）
 3.《西游记》简化版章节内容、幼儿园绘本内容
 4.常用模版（后来呢？然后呢？为什么呀？）`,
-      model: 'gpt-3.5-turbo',
       temperature: 0.8,
     },
   },
@@ -154,12 +179,12 @@ O（观点）：鼓励幼儿说出自己的感受、看法和理由。例："你
 export function loadConfig(): SystemConfig {
   return {
     llm: {
-      provider: (process.env.LLM_PROVIDER as 'openai' | 'anthropic' | 'custom') || defaultConfig.llm.provider,
+      provider: (process.env.LLM_PROVIDER as SystemConfig['llm']['provider']) || defaultConfig.llm.provider,
       apiKey: process.env.LLM_API_KEY || process.env.OPENAI_API_KEY || defaultConfig.llm.apiKey,
       baseURL: process.env.LLM_BASE_URL || defaultConfig.llm.baseURL,
       model: process.env.LLM_MODEL || defaultConfig.llm.model,
-      temperature: parseFloat(process.env.LLM_TEMPERATURE || '0.7'),
-      maxTokens: parseInt(process.env.LLM_MAX_TOKENS || '2000', 10),
+      temperature: envNumber(process.env.LLM_TEMPERATURE, defaultConfig.llm.temperature ?? 0.7),
+      maxTokens: envNumber(process.env.LLM_MAX_TOKENS, defaultConfig.llm.maxTokens ?? 2000),
       extraBody: parseExtraBody(),
     },
     storage: {

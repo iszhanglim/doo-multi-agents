@@ -41,6 +41,8 @@ export class DOOMultiAgentSystem {
   public journeyPodcast: JourneyPodcast;
 
   private initialized: boolean = false;
+  /** PostgreSQL 建表等异步初始化：构造期发起，`initialize()` 中统一 await */
+  private initPromise: Promise<void> = Promise.resolve();
 
   constructor() {
     const config = loadConfig();
@@ -55,24 +57,52 @@ export class DOOMultiAgentSystem {
     this.featureExtractor = new FeatureExtractor();
 
     // Assessment
-    const useLLM = config.llm.provider === 'coze' || !!(config.llm.apiKey && config.llm.apiKey.trim());
-    this.assessmentEngine = new AssessmentEngine(this.llmClient, useLLM);
+    // 是否启用 LLM：
+    //  - coze    ：平台托管，凭据自动注入，恒可用
+    //  - custom  ：endpoint 由部署方给定，允许免鉴权的自建服务（callCustom 不强制 apiKey）
+    //  - openai / anthropic：必须有 key，否则每次调用都抛 LLMConfigError
+    const needsApiKey = config.llm.provider === 'openai' || config.llm.provider === 'anthropic';
+    const hasApiKey = !!(config.llm.apiKey && config.llm.apiKey.trim());
+    const useLLM = !needsApiKey || hasApiKey;
+    if (!useLLM) {
+      console.warn(
+        `⚠️ LLM_PROVIDER=${config.llm.provider} 未提供 LLM_API_KEY —— 已关闭 LLM，全部走规则引擎`
+      );
+    }
+    this.assessmentEngine = new AssessmentEngine(this.llmClient, useLLM, {
+      system: config.agents.expert.systemPrompt,
+      temperature: config.agents.expert.temperature,
+      model: config.agents.expert.model,
+    });
 
     // Portrait system
     this.portraitEngine = new PortraitEngine();
     if (process.env.DATABASE_URL) {
       const pg = new PostgresStorage(process.env.DATABASE_URL);
       this.portraitStorage = pg;
-      pg.init().catch(err => console.error('PostgreSQL init failed:', err));
+      // 构造函数不能 async，因此这里只发起、不等待；由 initialize() 统一 await。
+      // 原先直接 `pg.init().catch(...)` 不 await，冷启动首个请求可能命中「表不存在」。
+      // 失败不向上抛：避免一次建表失败让后续所有请求都被拒绝（可用性优先），但会明确告警。
+      this.initPromise = pg.init().catch((err: unknown) => {
+        console.error('❌ PostgreSQL 初始化失败（数据表可能未创建）:', err instanceof Error ? err.message : err);
+      });
       console.log('📦 使用 PostgreSQL 持久化存储');
     } else {
       this.portraitStorage = new PortraitStorage(config.storage);
+      this.initPromise = Promise.resolve();
       console.log('📦 使用 JSON 文件存储');
     }
     this.radarChart = new RadarChart();
 
     // Agents
-    this.expertAgent = new ExpertAgent(config.agents.expert, this.messageBus, this.llmClient, useLLM);
+    this.expertAgent = new ExpertAgent(
+      config.agents.expert,
+      this.messageBus,
+      this.llmClient,
+      useLLM,
+      // 注入同一个 AssessmentEngine 实例，避免与 this.assessmentEngine 出现两套配置
+      this.assessmentEngine
+    );
     this.teacherAgent = new TeacherAgent(config.agents.teacher, this.messageBus, this.llmClient, useLLM);
     this.peerAgent = new PeerAgent(config.agents.peer, this.messageBus, this.llmClient, useLLM);
 
@@ -102,6 +132,9 @@ export class DOOMultiAgentSystem {
   }
 
   async initialize(): Promise<void> {
+    // 先等待异步基础设施就绪（PostgreSQL 建表等），再标记初始化完成。
+    // 并发调用会 await 同一个 Promise，天然幂等。
+    await this.initPromise;
     if (this.initialized) return;
 
     console.log('🚀 DOO多智能体系统初始化中...');
@@ -144,11 +177,20 @@ export class DOOMultiAgentSystem {
         throw new Error(`Unknown scenario: ${scenario}`);
     }
 
+    // 不再用非空断言掩盖失败：orchestrator 全阶段出错时 assessment 为 undefined，
+    // 此时画像也不会写库，`!` 会把 null 谎报为有效值并返回 success:true。
+    if (!result.assessment) {
+      throw new Error(`场景执行未产生评估结果（scenario=${scenario}）`);
+    }
+
     const portrait = await this.portraitStorage.loadPortrait(input.childId);
+    if (!portrait) {
+      throw new Error(`评估完成但未找到幼儿画像（childId=${input.childId}）`);
+    }
 
     return {
-      assessment: result.assessment!,
-      portrait: portrait!,
+      assessment: result.assessment,
+      portrait,
       interactions: result.interactions,
       reflections: result.reflections,
     };

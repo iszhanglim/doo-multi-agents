@@ -8,9 +8,27 @@ import { generateIndividualReport, generateComparisonReport, generateClassReport
 export class ExpertAgent extends Agent {
   private assessmentEngine: AssessmentEngine;
 
-  constructor(config: AgentConfig, messageBus: MessageBus, llmClient: LLMClient, useLLM = true) {
+  /**
+   * @param assessmentEngine 可选注入的共享实例。
+   *   原先 `DOOMultiAgentSystem` 与本类各构造一个 `AssessmentEngine`（同一 llmClient），
+   *   一旦 `useLLM` 判定或请求参数改动只落在一处，就会产生行为分叉。现支持注入同一实例。
+   */
+  constructor(
+    config: AgentConfig,
+    messageBus: MessageBus,
+    llmClient: LLMClient,
+    useLLM = true,
+    assessmentEngine?: AssessmentEngine
+  ) {
     super(config, messageBus);
-    this.assessmentEngine = new AssessmentEngine(llmClient, useLLM);
+    this.assessmentEngine =
+      assessmentEngine ??
+      new AssessmentEngine(llmClient, useLLM, {
+        // 让 D博士 自身的 systemPrompt / 低温设置真正下发到 LLM（此前为死配置）
+        system: config.systemPrompt,
+        temperature: config.temperature,
+        model: config.model,
+      });
   }
 
   protected setupSubscriptions(): void {

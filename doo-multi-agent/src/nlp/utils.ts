@@ -73,6 +73,15 @@ export const VERBS: readonly string[] = [
 
 // ========== Counting helpers ==========
 
+/**
+ * 统计 `list` 中有多少个词在文本里出现过。
+ *
+ * ⚠️ 语义说明（易误读）：这是**子串出现判定**，不是词频统计。
+ * 中文没有天然词边界，`extractWords` 逐字切开再 `join('')` 等价于对原文做包含检查，
+ * 因此「大」会被「大象 / 高大」命中；返回值是「命中了多少个不同词」而非出现次数。
+ * 这与《学前儿童叙事能力评定表》中「是否出现某类词」的判定口径一致，属有意为之。
+ * 若将来需要真正的词频统计，应引入分词（如 jieba）另写函数，而不是修改此处。
+ */
 export function countWordsInList(words: string[], list: readonly string[]): number {
   const text = words.join('');
   return list.filter(w => text.includes(w)).length;

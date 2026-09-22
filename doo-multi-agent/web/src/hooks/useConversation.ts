@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { api } from '../services/api';
 import type { DOOAssessment, ChildPortrait, AgentMessage } from '../types';
 
@@ -40,10 +40,18 @@ export function useConversation() {
     reflections: [],
   });
 
+  /**
+   * sessionId 的同步副本。
+   * `state.sessionId` 在 useCallback 里是渲染时捕获的值，连续发送时可能用到旧值；
+   * 用 ref 持有可保证随时读到最新会话 ID。
+   */
+  const sessionIdRef = useRef<string | null>(null);
+
   const start = useCallback(async (childName: string, classId: string, scenario: string) => {
     setState(prev => ({ ...prev, loading: true, error: null }));
     try {
       const res = await api.conversationStart({ childName, classId, scenario });
+      sessionIdRef.current = res.sessionId;
       setState({
         sessionId: res.sessionId,
         messages: [
@@ -75,7 +83,8 @@ export function useConversation() {
   }, []);
 
   const send = useCallback(async (message: string) => {
-    if (!state.sessionId) return;
+    const sessionId = sessionIdRef.current;
+    if (!sessionId) return;
 
     // 立即显示孩子的消息
     const childMsg: ChatMessage = {
@@ -91,7 +100,7 @@ export function useConversation() {
     }));
 
     try {
-      const res = await api.conversationTurn({ sessionId: state.sessionId, message });
+      const res = await api.conversationTurn({ sessionId, message });
       const peerMsg: ChatMessage = {
         id: `peer_${Date.now()}`,
         role: 'peer',
@@ -112,14 +121,14 @@ export function useConversation() {
         error: err instanceof Error ? err.message : '发送失败',
       }));
     }
-  }, [state.sessionId]);
-
+  }, []);
   const end = useCallback(async () => {
-    if (!state.sessionId) return;
+    const sessionId = sessionIdRef.current;
+    if (!sessionId) return;
 
     setState(prev => ({ ...prev, status: 'assessing', loading: true }));
     try {
-      const res = await api.conversationEnd({ sessionId: state.sessionId });
+      const res = await api.conversationEnd({ sessionId });
       setState(prev => ({
         ...prev,
         status: 'done',
@@ -137,9 +146,10 @@ export function useConversation() {
         error: err instanceof Error ? err.message : '评估失败',
       }));
     }
-  }, [state.sessionId]);
+  }, []);
 
   const reset = useCallback(() => {
+    sessionIdRef.current = null;
     setState({
       sessionId: null,
       messages: [],

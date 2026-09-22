@@ -321,6 +321,15 @@ export class PeerAgent extends Agent {
     return `你勇敢地讲了故事，真了不起！${hint}`;
   }
 
+  /** 以本 Agent 的人设与温度调用 LLM（systemPrompt / temperature 此前是死配置，从未下发） */
+  private async callLLM(prompt: string): Promise<string> {
+    return this.llmClient!.complete(prompt, {
+      system: this.config.systemPrompt,
+      temperature: this.config.temperature,
+      model: this.config.model,
+    });
+  }
+
   private async generateLLMResponse(content: string, scenario: ScenarioType): Promise<string> {
     const scenarioContext = scenario === 'journey_podcast'
       ? '你们在录西游播客，分享今天的故事'
@@ -351,7 +360,7 @@ export class PeerAgent extends Agent {
 
 请直接回复一句话，不要加引号或解释：`;
 
-    const response = await this.llmClient!.complete(prompt);
+    const response = await this.callLLM(prompt);
     return response.trim().replace(/^["「]|["」]$/g, '').slice(0, 100);
   }
 
@@ -367,7 +376,7 @@ ${hint}。
 
 要求：像5-6岁孩子一样说话，简短、温暖、有童趣。不能使用成人化词汇，不能表现出诊断或评价倾向。直接说一句话：`;
 
-    const response = await this.llmClient!.complete(prompt);
+    const response = await this.callLLM(prompt);
     return response.trim().replace(/^["「]|["」]$/g, '').slice(0, 80);
   }
 
@@ -550,7 +559,7 @@ ${dialogueHistory}
 
 请直接回复一句话（不超过50字），不要加引号或解释：`;
 
-    const response = await this.llmClient!.complete(prompt);
+    const response = await this.callLLM(prompt);
     return response.trim().replace(/^["「]|["」]$/g, '').slice(0, 80);
   }
 

@@ -6,6 +6,27 @@ interface ReportExportProps {
   assessment: DOOAssessment;
 }
 
+/**
+ * HTML 转义。
+ * 报告 HTML 会通过 `document.write` 注入到新窗口，其中含幼儿姓名（用户输入）
+ * 与 LLM 生成的建议文本，未转义即构成 XSS。
+ */
+const escapeHtml = (value: unknown): string =>
+  String(value ?? '').replace(/[&<>"']/g, (ch) => {
+    switch (ch) {
+      case '&':
+        return '&amp;';
+      case '<':
+        return '&lt;';
+      case '>':
+        return '&gt;';
+      case '"':
+        return '&quot;';
+      default:
+        return '&#39;';
+    }
+  });
+
 const ReportExport: React.FC<ReportExportProps> = ({ childName, assessment }) => {
   const [exporting, setExporting] = useState(false);
 
@@ -35,7 +56,7 @@ const ReportExport: React.FC<ReportExportProps> = ({ childName, assessment }) =>
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
-  <title>DOO叙事能力评估报告 - ${childName}</title>
+  <title>DOO叙事能力评估报告 - ${escapeHtml(childName)}</title>
   <style>
     body { font-family: 'Noto Sans SC', sans-serif; max-width: 800px; margin: 0 auto; padding: 40px; color: #2D2A4A; }
     .header { text-align: center; border-bottom: 3px solid #FF8C42; padding-bottom: 20px; margin-bottom: 30px; }
@@ -60,7 +81,7 @@ const ReportExport: React.FC<ReportExportProps> = ({ childName, assessment }) =>
   </div>
   
   <div class="info">
-    <div class="info-row"><strong>幼儿姓名:</strong> <span>${childName}</span></div>
+    <div class="info-row"><strong>幼儿姓名:</strong> <span>${escapeHtml(childName)}</span></div>
     <div class="info-row"><strong>评估日期:</strong> <span>${date}</span></div>
     <div class="info-row"><strong>评估场景:</strong> <span>智能故事角</span></div>
   </div>
@@ -102,7 +123,7 @@ const ReportExport: React.FC<ReportExportProps> = ({ childName, assessment }) =>
   <div class="suggestions">
     <h3>💡 发展建议</h3>
     <ul>
-      ${assessment.suggestions.map((s) => `<li>${s}</li>`).join('')}
+      ${assessment.suggestions.map((s) => `<li>${escapeHtml(s)}</li>`).join('')}
     </ul>
   </div>
 

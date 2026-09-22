@@ -2,20 +2,35 @@ import type { ChildPortrait, NarrativeInput, AssessmentRunResult } from '../type
 
 const API_BASE = import.meta.env.PROD ? '/api' : 'http://127.0.0.1:3001/api';
 
+/** 登录令牌（服务端 HMAC 签名），管理类接口靠它做角色校验 */
+const TOKEN_KEY = 'doo_token';
+
+function getToken(): string | null {
+  try {
+    return localStorage.getItem(TOKEN_KEY);
+  } catch {
+    return null;
+  }
+}
+
 async function fetchApi<T>(url: string, options?: RequestInit): Promise<T> {
+  const token = getToken();
   const response = await fetch(`${API_BASE}${url}`, {
+    ...options,
     headers: {
       'Content-Type': 'application/json',
+      ...(token ? { 'X-Auth-Token': token } : {}),
+      // 允许调用方额外覆盖/追加头
+      ...((options?.headers as Record<string, string> | undefined) ?? {}),
     },
-    ...options,
   });
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ error: '请求失败' }));
+    const error = (await response.json().catch(() => ({}))) as { error?: string };
     throw new Error(error.error || `HTTP ${response.status}`);
   }
 
-  return response.json();
+  return (await response.json()) as T;
 }
 
 export const api = {

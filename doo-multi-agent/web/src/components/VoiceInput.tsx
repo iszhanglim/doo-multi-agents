@@ -6,6 +6,14 @@ interface VoiceInputProps {
 
 const TARGET_SAMPLE_RATE = 16000;
 
+/**
+ * 单次录音上限（毫秒）。
+ * WAV 未压缩：16kHz/16bit = 32KB/s，60s ≈ 1.9MB；
+ * 同时约束 PCM 在内存中的无界增长（48kHz Float32 约 192KB/s，10 分钟可达百 MB 级）。
+ * 该上限也与平台单文件 16MB 限制、以及「健康用屏」规则一致。
+ */
+const MAX_RECORDING_MS = 60_000;
+
 /** 线性重采样到 16kHz 单声道，编码 16-bit PCM WAV——ASR 原生格式，服务端无需转码 */
 function encodeWav(samples: Float32Array, inRate: number): Blob {
   let pcm = samples;
@@ -62,17 +70,30 @@ const VoiceInput: React.FC<VoiceInputProps> = ({ onTranscript }) => {
   const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const silentRef = useRef<GainNode | null>(null);
   const pcmChunksRef = useRef<Float32Array[]>([]);
+  /** 已累计的样本数，用于给 PCM 缓冲设硬上限 */
+  const recordedSamplesRef = useRef(0);
   const sampleRateRef = useRef<number>(TARGET_SAMPLE_RATE);
   const streamRef = useRef<MediaStream | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const autoStopRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** 同步重入锁：`status` 是异步 state，无法阻止 await 期间的二次进入 */
+  const startingRef = useRef(false);
   const mountedRef = useRef(true);
+  /** 指向最新的 finishRecording，供热停止定时器调用，避免闭包过期 */
+  const finishRecordingRef = useRef<() => void>(() => {});
 
   const cleanupRecording = useCallback(() => {
     if (timerRef.current) {
       clearInterval(timerRef.current);
       timerRef.current = null;
     }
+    if (autoStopRef.current) {
+      clearTimeout(autoStopRef.current);
+      autoStopRef.current = null;
+    }
     if (processorRef.current) {
+      // 先摘掉回调，避免断开过程中仍往已清空的缓冲里 push
+      processorRef.current.onaudioprocess = null;
       processorRef.current.disconnect();
       processorRef.current = null;
     }
@@ -92,6 +113,8 @@ const VoiceInput: React.FC<VoiceInputProps> = ({ onTranscript }) => {
       void ctxRef.current.close().catch(() => { /* 已关闭 */ });
       ctxRef.current = null;
     }
+    // 无论成功还是异常路径都要复位重入锁
+    startingRef.current = false;
   }, []);
 
   useEffect(() => {
@@ -133,6 +156,8 @@ const VoiceInput: React.FC<VoiceInputProps> = ({ onTranscript }) => {
     const rate = sampleRateRef.current;
     const total = pcmChunksRef.current.reduce((n, c) => n + c.length, 0);
     if (total < rate) {
+      pcmChunksRef.current = [];
+      recordedSamplesRef.current = 0;
       setError('录音太短，请重试');
       setStatus('idle');
       return;
@@ -144,31 +169,71 @@ const VoiceInput: React.FC<VoiceInputProps> = ({ onTranscript }) => {
       off += c.length;
     }
     pcmChunksRef.current = [];
-    transcribe(encodeWav(merged, rate));
+    recordedSamplesRef.current = 0;
+    void transcribe(encodeWav(merged, rate));
   }, [cleanupRecording, transcribe]);
 
+  // 让自动停止定时器始终调用到最新的 finishRecording（避免闭包过期）
+  useEffect(() => {
+    finishRecordingRef.current = finishRecording;
+  }, [finishRecording]);
+
   const startRecording = useCallback(async () => {
+    // 同步重入锁：`status` 要等 await 之后才更新，快速双击会并发进入本函数，
+    // 导致第一条 MediaStream / AudioContext 被覆盖且永不释放（麦克风指示灯不灭）
+    if (startingRef.current) return;
+    startingRef.current = true;
     setError(null);
+
     const Ctx = window.AudioContext
       || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
     if (!navigator.mediaDevices?.getUserMedia || !Ctx) {
+      startingRef.current = false;
       setError('当前浏览器不支持录音，请使用Chrome或Edge');
       return;
     }
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      // 优先请求 16k 单声道：多数浏览器会直接给出目标采样率，
+      // 这样 encodeWav 无需重采样（线性重采样没有抗混叠滤波，能省则省）
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          sampleRate: TARGET_SAMPLE_RATE,
+          channelCount: 1,
+          echoCancellation: true,
+          noiseSuppression: true,
+        },
+      });
       streamRef.current = stream;
+
       const ctx = new Ctx();
       ctxRef.current = ctx;
+      // Safari/iOS 新建的 AudioContext 常处于 suspended，此时 onaudioprocess 永不触发，
+      // 现象是界面显示「录音中」但停止后固定报「录音太短」
+      if (ctx.state === 'suspended') {
+        await ctx.resume().catch(() => { /* 下面统一校验 state */ });
+      }
+      if (ctx.state !== 'running') {
+        throw new Error(`麦克风通道未能启动（AudioContext state=${ctx.state}）`);
+      }
+
       sampleRateRef.current = ctx.sampleRate;
       pcmChunksRef.current = [];
+      recordedSamplesRef.current = 0;
+
       const source = ctx.createMediaStreamSource(stream);
       sourceRef.current = source;
+
       const processor = ctx.createScriptProcessor(4096, 1, 1);
       processorRef.current = processor;
+      const maxSamples = Math.ceil((ctx.sampleRate * MAX_RECORDING_MS) / 1000);
       processor.onaudioprocess = (e: AudioProcessingEvent) => {
-        pcmChunksRef.current.push(new Float32Array(e.inputBuffer.getChannelData(0)));
+        // 兜底：达到上限后不再累积，避免内存无界增长
+        if (recordedSamplesRef.current >= maxSamples) return;
+        const chunk = new Float32Array(e.inputBuffer.getChannelData(0));
+        recordedSamplesRef.current += chunk.length;
+        pcmChunksRef.current.push(chunk);
       };
+
       // 静音增益接 destination：驱动处理循环但避免麦克风回放外放
       const silent = ctx.createGain();
       silent.gain.value = 0;
@@ -176,13 +241,21 @@ const VoiceInput: React.FC<VoiceInputProps> = ({ onTranscript }) => {
       source.connect(processor);
       processor.connect(silent);
       silent.connect(ctx.destination);
+
       setStatus('recording');
       setSeconds(0);
       timerRef.current = setInterval(() => setSeconds(s => s + 1), 1000);
+      // 到点自动停止并提示，避免用户忘记停止导致内存与体积无界增长
+      autoStopRef.current = setTimeout(() => {
+        if (!ctxRef.current) return;
+        setError(`已达单次录音上限 ${MAX_RECORDING_MS / 1000} 秒，已自动停止`);
+        finishRecordingRef.current();
+      }, MAX_RECORDING_MS);
     } catch (e) {
       const name = (e as DOMException)?.name;
       if (name === 'NotAllowedError') setError('麦克风权限被拒绝，请在浏览器地址栏允许麦克风');
       else if (name === 'NotFoundError') setError('未检测到麦克风设备');
+      else if (e instanceof Error && e.message) setError(e.message);
       else setError('无法启动录音');
       setStatus('idle');
       cleanupRecording();
@@ -190,14 +263,13 @@ const VoiceInput: React.FC<VoiceInputProps> = ({ onTranscript }) => {
   }, [cleanupRecording]);
 
   const stopRecording = useCallback(() => {
-    if (ctxRef.current) {
-      finishRecording();
-    }
-  }, [finishRecording]);
+    if (!ctxRef.current) return;
+    finishRecordingRef.current();
+  }, []);
 
   const handleToggle = useCallback(() => {
     if (status === 'recording') stopRecording();
-    else if (status === 'idle') startRecording();
+    else if (status === 'idle') void startRecording();
     // transcribing 状态下按钮禁用，不处理
   }, [status, startRecording, stopRecording]);
 

@@ -20,8 +20,8 @@
 | 数据库 | **PostgreSQL 引擎** | `PostgresStorage` 用的正是 PG，类型全兼容 | ✅ |
 | 数据库费用 | 官方原文「目前**免收**存储、数据库、向量模型的内置集成费用」 | — | ✅ |
 | 运行时 | 未给出明确清单，但文档示例含 `npm install` | Node 项目 | ⚠️ 待实测 |
-| 单文件上传 | 部署后 ≤ **16MB** | `/api/stt` 允许 30MB | ⚠️ 语音上传会失败 |
-| 可见性 | **仅支持公开部署** | `/api/*` 零鉴权 | ⚠️⚠️ 见 §7 |
+| 单文件上传 | 部署后 ≤ **16MB** | `/api/stt` 已收紧为 `limit: '16mb'`（原 30MB） | ✅ |
+| 可见性 | **仅支持公开部署** | `ACCESS_CODE` 站点口令 + 登录令牌/角色（管理接口）+ 两级限流 | ⚠️ 见 §7 |
 
 **代码零改动**：`package.json` 的 `build` 脚本（`tsc && cd web && npm install && npm run build`）
 本身就包含了 web 目录的依赖安装与前端构建，`start` 脚本也已用 `$PORT`。
@@ -127,27 +127,43 @@ CREATE TABLE IF NOT EXISTS users (
 ### 生产环境变量（逐个新建）
 
 ```
-LLM_PROVIDER=custom
+LLM_PROVIDER=openai
 LLM_API_KEY=<你的 DeepSeek Key>
-LLM_BASE_URL=https://api.deepseek.com/v1/chat/completions
-LLM_MODEL=deepseek-chat
+LLM_BASE_URL=https://api.deepseek.com/chat/completions
+LLM_MODEL=deepseek-flash
 LLM_TEMPERATURE=0.7
-LLM_MAX_TOKENS=4096
+LLM_MAX_TOKENS=8192
+LLM_EXTRA_BODY={"thinking":{"type":"disabled"}}
+LLM_TIMEOUT_MS=30000
 DATABASE_URL=<从「数据库 → 设置」复制的连接串>
 ACCESS_CODE=<自己定一个访问口令，公网部署强烈建议必填>
+AUTH_SECRET=<建议单独设一个随机串，用于登录令牌签名；不设则复用 ACCESS_CODE>
 RATE_LIMIT_PER_MIN=120
+RATE_LIMIT_GLOBAL_PER_MIN=1200
 ```
 
 > **`ACCESS_CODE` 是公网部署的关键防护**。扣子仅支持公开部署，不设口令就等于把
 > `/api/assess` 敞开给任何人刷 LLM 额度。设置后：
 > - 除 `/api/health` 外所有请求需要 HTTP Basic 认证，**用户名任意，密码填 `ACCESS_CODE`**
-> - 浏览器首次打开会弹原生登录框；认证后凭证被缓存，`fetch('/api/...')` 自动携带，
->   **前端无需改动**
-> - 同时启用按 IP 限流（默认 120 次/分钟，超额 429）
+> - 浏览器首次打开会弹原生登录框；认证后凭证被缓存，`fetch('/api/...')` 自动携带
+> - 同时启用两级限流：按 IP（默认 120 次/分钟）+ **全站兜底**（默认 1200 次/分钟）。
+>   IP 取自 `X-Forwarded-For`、可被伪造，全站上限才是真正护住 LLM 额度的那道闸
 > - `/api/health` 刻意保持公开 —— 扣子的健康检查依赖它，加了鉴权会导致**部署失败**
 
-> `LLM_BASE_URL` 必须保留 `/v1/chat/completions` 后缀 ——
-> 它被当作**完整 endpoint** 直接 POST（`src/nlp/LLMClient.ts:113`），不是 SDK 的 baseURL。
+> **站点口令 ≠ 身份**。`ACCESS_CODE` 是全员同一个的共享口令，无法区分是谁，
+> 因此管理类接口（用户列表 / 改密 / 删除用户 / 重置密码）改为依赖**登录令牌 + 角色**：
+> 登录成功后服务端签发 HMAC 令牌，前端存 `localStorage` 并以 `X-Auth-Token` 头回传，
+> 管理员接口再校验 `role === 'admin'`。
+> 若不单独设 `AUTH_SECRET`，请确保 `ACCESS_CODE` 足够随机（它会被复用为签名密钥）。
+
+> `LLM_BASE_URL` 必须保留 `/chat/completions` 后缀 ——
+> 它被当作**完整 endpoint** 直接 POST（`src/nlp/LLMClient.ts` 的 `callOpenAI` / `callCustom`），
+> 不是 SDK 的 baseURL；写成 `https://api.deepseek.com/v1` 这种 baseURL 形式会 404。
+
+> **`LLM_PROVIDER` 请用 `openai`（不要用 `custom`）**：两者都把 `LLM_BASE_URL` 当完整
+> endpoint 直接 POST，但 `LLM_EXTRA_BODY` 的注入点在 OpenAI 兼容分支；用 `custom`
+> 会导致思考模式关不掉、思考耗尽 `max_tokens` 使 `content` 为空，
+> 评估**静默降级**为规则引擎（页面不报错，只是结果异常）。
 
 填完点「**开始部署**」，看部署日志（构建 → 打包 → 部署），约几分钟。
 
@@ -187,15 +203,17 @@ curl -s https://<你的域名>/api/stats
 
 ## 7. 三个必须知道的风险
 
-1. **只支持公开部署** —— 已通过 `ACCESS_CODE` 共享口令 + 按 IP 限流兜住（见 §4）
-   服务端中间件位于 `web/server/index.ts` 头部：设置 `ACCESS_CODE` 后，
-   除 `/api/health` 外所有请求需 HTTP Basic 认证（用户名任意，密码为该口令），
-   浏览器首次访问弹登录框，认证后凭证被缓存、`fetch('/api/...')` 自动携带。
+1. **只支持公开部署** —— 已通过三层防护兜住（见 §4）
+   服务端中间件位于 `web/server/index.ts` 头部：
+   1. `ACCESS_CODE` 站点级共享口令（HTTP Basic），把整个站点挡在门外；
+   2. 按 IP（120/分钟）+ **全站兜底**（1200/分钟）两级限流，保护 LLM 额度不被刷；
+   3. 管理类接口（用户列表 / 改密 / 删除 / 重置密码）额外要求**登录令牌 + `admin` 角色**
+      —— 共享口令无法区分身份，不能用来做授权。
    **上线前务必在「生产环境变量」里填上 `ACCESS_CODE`**，否则链接外泄即可被刷额度。
    免费版还强制带 Coze Logo，链接更容易被外部扫到。
 
-> 相关：前端那个 `teacher1/123456` 登录页只是 localStorage 客户端状态，
-> **不构成安全防护**，不要指望它。
+> 相关：前端那个 `teacher1/123456` 登录页自身不是安全边界，但现在它的登录结果
+> 会换取服务端签发的令牌，**管理接口的授权已由服务端令牌承担**，不再依赖前端状态。
 
 2. **幼儿个人信息（姓名 / 班级 / 叙事文本）会落到扣子的托管数据库**
    属敏感个人信息，公开站点 + 第三方托管需评估合规。
