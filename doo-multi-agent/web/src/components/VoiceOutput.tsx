@@ -29,7 +29,7 @@ const VoiceOutput: React.FC<VoiceOutputProps> = ({ text, autoPlay = true }) => {
       const res = await fetch(TTS_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, voice: VOICE, rate: '+5%' }),
+        body: JSON.stringify({ text, voice: VOICE, rate: '+12%' }), // 语速稍快，大班男孩活泼感
       });
       if (!res.ok) throw new Error(`TTS ${res.status}`);
 
@@ -56,7 +56,8 @@ const VoiceOutput: React.FC<VoiceOutputProps> = ({ text, autoPlay = true }) => {
       if (typeof window !== 'undefined' && window.speechSynthesis) {
         const utter = new SpeechSynthesisUtterance(text);
         utter.lang = 'zh-CN';
-        utter.rate = 1.05;
+        utter.rate = 1.12;
+        utter.pitch = 1.5; // 提高音调，贴近男童声
         utter.onend = () => setIsSpeaking(false);
         utter.onerror = () => setIsSpeaking(false);
         window.speechSynthesis.speak(utter);

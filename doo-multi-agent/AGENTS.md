@@ -160,9 +160,10 @@ CREATE TABLE IF NOT EXISTS users (
 
 - `/api/tts`：`TTSClient.synthesize` → 下载 mp3 → 落盘缓存（`/tmp/doo-tts`）后返回
   `audio/mpeg` 二进制（响应结构不变，前端零改动）。音色固定为
-  `saturn_zh_male_tiancaitongzhuo_tob`（天才同桌男童声，贴合"多多"幼儿伙伴设定；
-  2026-09-22 由开朗少年声换为童声）；前端传入的 edge-tts
-  `voice` 参数被忽略，`rate`（如 `+5%`）映射为 `speechRate`。
+  `saturn_zh_male_tiancaitongzhuo_tob`（天才同桌男童声，贴合"多多"大班男孩设定；
+  2026-09-22 由开朗少年声换为童声，**托管音色池中唯一男孩童声**——mars 系等其他
+  童声 ID 实测均报 resource ID mismatch）；前端传 `rate:'+12%'`（语速稍快求活泼），
+  `rate`（如 `+12%`）映射为 `speechRate`。
 - `/api/stt`：保留魔数嗅探 `detectAudioExt`；托管 ASR 只支持 wav/mp3/ogg/m4a。
   **前端不再用 MediaRecorder**（2026-09-21 起）：`VoiceInput.tsx` 改用 Web Audio
   采集 PCM → 线性重采样 16kHz → 编码 16-bit WAV 直传，服务端对主路径零转码依赖
