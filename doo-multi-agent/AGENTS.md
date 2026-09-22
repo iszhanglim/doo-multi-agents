@@ -170,6 +170,19 @@ CREATE TABLE IF NOT EXISTS users (
   TTS 失败再降级 speechSynthesis（pitch 1.5）。**注意：托管引擎对 SSML
   `<prosody>`（任何属性，含 pitch/volume/rate）有慢放 bug**——5 秒文本会被
   拉长到 40~55 秒，`<speak>` 纯包装则正常；不要用 SSML prosody 调音调。
+- **火山引擎 TTS provider（2026-09-22 接入，等凭证启用）**：`.env` 配置
+  `VOLC_TTS_APPID` + `VOLC_TTS_TOKEN` 后自动优先走火山 v1 HTTP 非流式接口
+  （`openspeech.bytedance.com/api/v1/tts`，Header `Bearer;{token}`，响应
+  JSON `data` 为 base64 mp3，`code===3000` 为成功），音色默认剪映同款
+  **奶气萌娃 2.0** `zh_male_naiqimengwa_uranus_bigtts`（`VOLC_TTS_VOICE` 可换），
+  备选天才童声/开朗弟弟 2.0。失败自动回落托管 TTS。响应头 `X-TTS-Provider`
+  告知前端 provider：`volc` 时前端不叠加 detune（原生音色已足够幼态），
+  `coze` 时前端 detune +300。音色与托管池无关——托管 TTS 白名单里没有
+  剪映音色，实测 mars 系全部报 resource ID mismatch。**「奶气萌娃」在托管池
+  已穷尽实测不存在**（saturn_zh_male_naiqimengwa_tob / zh_male_naiqimengwa_
+  saturn_bigtts 均报 mismatch，而 README 在列对照组 dayi/xueayi 全部成功），
+  托管池完整白名单=README 的 13 个音色；男孩童声仅天才同桌（最萌）、开朗少年
+  两个。
 - `/api/stt`：保留魔数嗅探 `detectAudioExt`；托管 ASR 只支持 wav/mp3/ogg/m4a。
   **前端不再用 MediaRecorder**（2026-09-21 起）：`VoiceInput.tsx` 改用 Web Audio
   采集 PCM → 线性重采样 16kHz → 编码 16-bit WAV 直传，服务端对主路径零转码依赖

@@ -17,12 +17,16 @@ interface WebAudioPlayback {
 }
 
 /** Web Audio 变调播放：成功返回 playback 供打断控制；不支持或解码失败返回 null 走兜底 */
-async function playDetunedChildVoice(blob: Blob, onEnd: () => void): Promise<WebAudioPlayback | null> {
+async function playDetunedChildVoice(
+  blob: Blob,
+  detuneCents: number,
+  onEnd: () => void
+): Promise<WebAudioPlayback | null> {
   try {
     const Ctx =
       window.AudioContext ||
       (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-    if (!Ctx) return null;
+    if (!Ctx || detuneCents === 0) return null;
     const ctx = new Ctx();
     const decoded = await ctx.decodeAudioData(await blob.arrayBuffer());
     const source = ctx.createBufferSource();
@@ -31,7 +35,7 @@ async function playDetunedChildVoice(blob: Blob, onEnd: () => void): Promise<Web
       ctx.close();
       return null;
     }
-    source.detune.value = CHILD_DETUNE_CENTS;
+    source.detune.value = detuneCents;
     source.connect(ctx.destination);
     await ctx.resume();
     source.onended = () => {
@@ -87,7 +91,9 @@ const VoiceOutput: React.FC<VoiceOutputProps> = ({ text, autoPlay = true }) => {
 
       const blob = await res.blob();
 
-      const playback = await playDetunedChildVoice(blob, () => {
+      // 火山原生童声（奶气萌娃等）本身足够幼态，不再叠加变调；仅托管音色做 +300 音分幼化
+      const detune = res.headers.get('X-TTS-Provider') === 'volc' ? 0 : CHILD_DETUNE_CENTS;
+      const playback = await playDetunedChildVoice(blob, detune, () => {
         setIsSpeaking(false);
         webAudioRef.current = null;
       });

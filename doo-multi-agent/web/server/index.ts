@@ -9,7 +9,7 @@ import type { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import bodyParser from 'body-parser';
 import bcrypt from 'bcrypt';
-import { createHash, createHmac, timingSafeEqual } from 'crypto';
+import { createHash, createHmac, timingSafeEqual, randomUUID } from 'crypto';
 import { DOOMultiAgentSystem } from '../../src';
 import { PostgresStorage } from '../../src/portrait/PostgresStorage';
 import { NarrativeInput } from '../../src/core/types';
@@ -917,6 +917,43 @@ const ttsCacheDir = join(tmpdir(), 'doo-tts');
 mkdirSync(ttsCacheDir, { recursive: true });
 const TTS_SPEAKER = 'saturn_zh_male_tiancaitongzhuo_tob'; // 托管音色：天才同桌男童声，贴合"多多"幼儿伙伴设定
 
+// 火山引擎 TTS（剪映同款音色源）。配置了 AppID/Token 即优先走火山原生，
+// 未配置或合成失败时回落平台托管 TTS。剪映男童声候选（官方音色列表 6561/1257544）：
+//   zh_male_naiqimengwa_uranus_bigtts   奶气萌娃 2.0（剪映同款,豆包同款）
+//   zh_male_tiancaitongsheng_uranus_bigtts 天才童声 2.0
+//   zh_male_kailangdidi_uranus_bigtts   开朗弟弟 2.0（抖音同款,剪映同款）
+const VOLC_TTS_APPID = (process.env.VOLC_TTS_APPID || '').trim();
+const VOLC_TTS_TOKEN = (process.env.VOLC_TTS_TOKEN || '').trim();
+const VOLC_TTS_VOICE = (process.env.VOLC_TTS_VOICE || 'zh_male_naiqimengwa_uranus_bigtts').trim();
+const VOLC_TTS_CLUSTER = (process.env.VOLC_TTS_CLUSTER || 'volcano_tts').trim();
+const VOLC_TTS_API = 'https://openspeech.bytedance.com/api/v1/tts';
+const volcTtsEnabled = Boolean(VOLC_TTS_APPID && VOLC_TTS_TOKEN);
+if (volcTtsEnabled) {
+  console.log(`🎙️ 火山引擎 TTS 已启用，音色: ${VOLC_TTS_VOICE}`);
+}
+
+/** 火山 v1 HTTP 非流式 TTS（大模型音色）：响应 JSON.data 为 base64 mp3，code 3000 为成功 */
+async function volcSynthesize(text: string, speedRatio: number): Promise<Buffer> {
+  const resp = await fetch(VOLC_TTS_API, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer;${VOLC_TTS_TOKEN}`,
+    },
+    body: JSON.stringify({
+      app: { appid: VOLC_TTS_APPID, token: VOLC_TTS_TOKEN, cluster: VOLC_TTS_CLUSTER },
+      user: { uid: 'doo-multi-agent' },
+      audio: { voice_type: VOLC_TTS_VOICE, encoding: 'mp3', speed_ratio: speedRatio },
+      request: { reqid: randomUUID(), text, operation: 'query' },
+    }),
+  });
+  const json = (await resp.json()) as { code?: number; message?: string; data?: string };
+  if (json.code !== 3000 || !json.data) {
+    throw new Error(`火山 TTS 失败 code=${json.code}: ${json.message}`);
+  }
+  return Buffer.from(json.data, 'base64');
+}
+
 /** TTS 缓存有效期。沙箱磁盘仅 3GB，缓存必须可回收（原先只写不删） */
 const TTS_CACHE_TTL_MS = (Number(process.env.TTS_CACHE_TTL_HOURS) || 24) * 60 * 60 * 1000;
 
@@ -963,7 +1000,11 @@ app.post('/api/tts', async (req, res) => {
     }
 
     const speechRate = typeof rate === 'string' ? parseInt(rate, 10) || 0 : 0; // '+5%' -> 5
-    const hash = createHash('md5').update(`${TTS_SPEAKER}|${speechRate}|${text}`).digest('hex').slice(0, 12);
+
+    // 火山原生音色（如奶气萌娃）本身已足够幼态，前端不再叠加变调，通过响应头告知
+    const useVolc = volcTtsEnabled;
+    const providerKey = useVolc ? `volc|${VOLC_TTS_VOICE}` : `coze|${TTS_SPEAKER}`;
+    const hash = createHash('md5').update(`${providerKey}|${speechRate}|${text}`).digest('hex').slice(0, 12);
     const outFile = join(ttsCacheDir, `${hash}.mp3`);
 
     // 缓存命中
@@ -971,24 +1012,43 @@ app.post('/api/tts', async (req, res) => {
       const audio = readFileSync(outFile);
       res.setHeader('Content-Type', 'audio/mpeg');
       res.setHeader('Cache-Control', 'public, max-age=86400');
+      res.setHeader('X-TTS-Provider', useVolc ? 'volc' : 'coze');
       return res.send(audio);
     }
 
-    // 平台托管 TTS 合成，下载 mp3 后落盘缓存
-    const customHeaders = HeaderUtils.extractForwardHeaders(req.headers);
-    const tts = new TTSClient(new Config(), customHeaders);
-    const response = await tts.synthesize({ uid: 'doo-multi-agent', text, speaker: TTS_SPEAKER, speechRate });
-    const audio = await fetchAudio(response.audioUri);
-    writeFileSync(outFile, audio);
+    let audio: Buffer;
+    if (useVolc) {
+      try {
+        // 火山 v1 接口：speed_ratio 范围 [0.1, 2]，'+12%' -> 1.12
+        audio = await volcSynthesize(text, Math.min(2, Math.max(0.1, 1 + speechRate / 100)));
+        writeFileSync(outFile, audio);
+      } catch (err) {
+        console.warn('火山 TTS 失败，回落平台托管:', (err as Error).message);
+        audio = await synthesizeViaCoze(req, text, speechRate);
+        writeFileSync(outFile, audio);
+      }
+    } else {
+      audio = await synthesizeViaCoze(req, text, speechRate);
+      writeFileSync(outFile, audio);
+    }
 
     res.setHeader('Content-Type', 'audio/mpeg');
     res.setHeader('Cache-Control', 'public, max-age=86400');
+    res.setHeader('X-TTS-Provider', useVolc ? 'volc' : 'coze');
     res.send(audio);
   } catch (error) {
     console.error('TTS 生成失败:', (error as Error).message);
     res.status(500).json({ error: '语音合成失败' });
   }
 });
+
+/** 平台托管 TTS 合成（coze-coding-dev-sdk），下载 mp3 后返回 */
+async function synthesizeViaCoze(req: Request, text: string, speechRate: number): Promise<Buffer> {
+  const customHeaders = HeaderUtils.extractForwardHeaders(req.headers);
+  const tts = new TTSClient(new Config(), customHeaders);
+  const response = await tts.synthesize({ uid: 'doo-multi-agent', text, speaker: TTS_SPEAKER, speechRate });
+  return fetchAudio(response.audioUri);
+}
 
 // ========== STT 语音识别（平台托管 ASR，不依赖本地模型） ==========
 const sttTmpDir = join(tmpdir(), 'doo-stt');
