@@ -1,6 +1,7 @@
 import { DOODimensions, DOOAssessment, Level, NarrativeInput } from '../core/types';
 import { DOOModel } from './DOOModel';
 import { LLMClient, CompleteOptions } from '../nlp/LLMClient';
+import { sanitizeMetaText } from '../nlp/sanitize';
 import {
   splitSentences,
   extractWords,
@@ -93,7 +94,9 @@ export class AssessmentEngine {
     const suggestions = DOOModel.generateDefaultSuggestions(finalDimensions);
 
     if (reasoning) {
-      suggestions.unshift(`评估分析：${reasoning}`);
+      // 清洗 LLM reasoning 中混入的元话语（"输出风格""内容已验证"等），避免污染教师可见建议
+      const analysis = sanitizeMetaText(`评估分析：${reasoning}`);
+      if (analysis) suggestions.unshift(analysis);
     }
 
     return DOOModel.createAssessment(narrativeInput, finalDimensions, suggestions);
@@ -350,7 +353,12 @@ export class AssessmentEngine {
 幼儿叙事内容：
 """${content}"""
 
-请严格按照上述标准和示例评分，以JSON格式返回评估结果：
+请严格按照上述标准和示例评分，以JSON格式返回评估结果。
+
+【输出纪律】你是一名儿童语言发展评估专家，只输出评分结果本身：
+- reasoning 字段只描述幼儿的叙事表现和打分依据；
+- 严禁提及任何与评估无关的元信息，包括：AI、模型、大模型、语言模型、提示词、prompt、输出、格式、规则、验证、测试、系统、风格等字样；
+- 不要解释你的工作方式或回答要求，直接给出评分理由。
 {
   "dimensions": {
     "diction": {
@@ -369,7 +377,7 @@ export class AssessmentEngine {
     }
   },
   "confidence": 0.0-1.0,
-  "reasoning": "评估理由的简要说明，请引用量表（评定表）中的具体标准"
+  "reasoning": "评估理由的简要说明，请引用量表（评定表）中的具体标准；只描述幼儿叙事表现与打分依据，禁止出现AI、模型、输出、格式、验证等元话语"
 }`;
   }
 
@@ -493,7 +501,9 @@ export class AssessmentEngine {
 幼儿叙事内容：
 """${content}"""
 
-请根据《学前儿童叙事能力评定表》对每个子维度评分（5分制：1-3分初级需要支持，3-4分中级基本达成，4-5分高级表现优秀），以JSON格式返回：
+请根据《学前儿童叙事能力评定表》对每个子维度评分（5分制：1-3分初级需要支持，3-4分中级基本达成，4-5分高级表现优秀），以JSON格式返回。
+
+【输出纪律】只输出评分结果本身；reasoning 字段只描述幼儿的叙事表现和打分依据，严禁提及 AI、模型、大模型、提示词、输出、格式、验证等与评估无关的元信息。
 {
   "dimensions": {
     "diction": {"vocabulary": 1|2|3|4|5, "sentenceStructure": 1|2|3|4|5},
@@ -501,7 +511,7 @@ export class AssessmentEngine {
     "opinion": {"narrativeViewpoint": 1|2|3|4|5}
   },
   "confidence": 0.0-1.0,
-  "reasoning": "逐项说明评分理由"
+  "reasoning": "逐项说明评分理由，只描述幼儿叙事表现与打分依据，禁止出现AI、模型、输出、格式、验证等元话语"
 }`;
 
     try {

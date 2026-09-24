@@ -4,6 +4,8 @@ name = "doo-multi-agent"
 requires = ["nodejs-24"]
 project_type = "web"
 version = "0.0.35"
+project_id = "7688949282086567976"
+app_id = "7688985040650534947"
 
 [preview]
 preview_enable = "enabled"

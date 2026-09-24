@@ -11,7 +11,7 @@ interface User {
 interface AuthContextType {
   user: User | null;
   isAuthenticated: boolean;
-  login: (username: string, password: string) => Promise<boolean>;
+  login: (username: string, password: string) => Promise<{ ok: boolean; mustChangePassword: boolean }>;
   logout: () => void;
   register: (username: string, password: string, name: string, classId?: string) => Promise<{ success: boolean; message: string }>;
   updateProfile: (updates: Partial<Pick<User, 'name' | 'avatar'>>) => Promise<boolean>;
@@ -67,9 +67,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   });
 
-  const login = useCallback(async (username: string, password: string): Promise<boolean> => {
+  const login = useCallback(async (
+    username: string, password: string
+  ): Promise<{ ok: boolean; mustChangePassword: boolean }> => {
     try {
-      const res = await fetchApi<{ success: boolean; user: User; token?: string }>('/auth/login', {
+      const res = await fetchApi<{ success: boolean; user: User; token?: string; mustChangePassword?: boolean }>('/auth/login', {
         method: 'POST',
         body: JSON.stringify({ username, password }),
       });
@@ -79,9 +81,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (res.token) {
         localStorage.setItem(TOKEN_KEY, res.token);
       }
-      return true;
+      return { ok: true, mustChangePassword: res.mustChangePassword === true };
     } catch {
-      return false;
+      return { ok: false, mustChangePassword: false };
     }
   }, []);
 

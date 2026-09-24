@@ -250,6 +250,17 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin }) => {
           font-size: 16px;
         }
 
+        .must-change-tip {
+          background: #FFF7E6;
+          border: 1px solid #FFD591;
+          color: #874D00;
+          border-radius: 8px;
+          padding: 10px 12px;
+          font-size: 13px;
+          line-height: 1.6;
+          margin-bottom: 16px;
+        }
+
         .login-toggle {
           text-align: center;
           margin-bottom: 20px;

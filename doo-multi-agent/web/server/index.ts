@@ -13,6 +13,7 @@ import { createHash, createHmac, timingSafeEqual, randomUUID } from 'crypto';
 import { DOOMultiAgentSystem } from '../../src';
 import { PostgresStorage } from '../../src/portrait/PostgresStorage';
 import { NarrativeInput } from '../../src/core/types';
+import { sanitizeMetaText, sanitizeMetaList } from '../../src/nlp/sanitize';
 import {
   createSession,
   getSession,
@@ -272,6 +273,43 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', agents: ['expert', 'teacher', 'peer'] });
 });
 
+// ========== LLM 元话语清洗（P0-2 兜底） ==========
+// AssessmentEngine 已在生成侧清洗；这里对响应再做一层兜底，
+// 覆盖历史落库数据中混入的"输出风格/内容已验证"等元话语。
+function sanitizeReportText(text: string): string {
+  if (typeof text !== 'string' || !text) return text;
+  // 按行处理，避免破坏 Markdown 结构（标题、表格、列表）
+  return text.split(/\r?\n/).map((line) => sanitizeMetaText(line)).join('\n');
+}
+
+function sanitizeAssessmentInPlace(assessment: unknown): void {
+  if (!assessment || typeof assessment !== 'object') return;
+  const a = assessment as { suggestions?: unknown };
+  if (Array.isArray(a.suggestions)) {
+    a.suggestions = sanitizeMetaList(a.suggestions as unknown[]);
+  }
+}
+
+function sanitizePortraitInPlace(portrait: unknown): void {
+  if (!portrait || typeof portrait !== 'object') return;
+  const p = portrait as {
+    basePortrait?: { assessments?: unknown };
+    progressivePortraits?: unknown;
+  };
+  const cleanAssessments = (assessments: unknown): void => {
+    if (!Array.isArray(assessments)) return;
+    for (const item of assessments) {
+      if (item && typeof item === 'object') sanitizeAssessmentInPlace(item);
+    }
+  };
+  if (p.basePortrait) cleanAssessments(p.basePortrait.assessments);
+  if (Array.isArray(p.progressivePortraits)) {
+    for (const pp of p.progressivePortraits) {
+      cleanAssessments((pp as { assessments?: unknown } | null)?.assessments);
+    }
+  }
+}
+
 // 评估叙事
 app.post('/api/assess', async (req, res) => {
   try {
@@ -315,6 +353,10 @@ app.post('/api/assess', async (req, res) => {
       }
     }
 
+    // 元话语兜底清洗（覆盖历史数据与生成侧遗漏）
+    sanitizeAssessmentInPlace(result.assessment);
+    if (result.portrait) sanitizePortraitInPlace(result.portrait);
+
     res.json({
       success: true,
       assessment: result.assessment,
@@ -322,7 +364,7 @@ app.post('/api/assess', async (req, res) => {
       childId: input.childId,
       interactions: result.interactions,
       reflections: result.reflections ?? [],
-      report: reportText,
+      report: sanitizeReportText(reportText),
     });
   } catch (error) {
     console.error('评估错误:', error);
@@ -351,6 +393,10 @@ app.post('/api/scenario/:type', async (req, res) => {
 
     const result = await system.runScenario(type, input);
 
+    // 元话语兜底清洗
+    sanitizeAssessmentInPlace(result.assessment);
+    if (result.portrait) sanitizePortraitInPlace(result.portrait);
+
     res.json({
       success: true,
       result,
@@ -371,6 +417,9 @@ app.get('/api/portrait/:childId', async (req, res) => {
       return res.status(404).json({ error: '未找到该幼儿画像' });
     }
 
+    // 元话语兜底清洗（历史落库数据）
+    sanitizePortraitInPlace(portrait);
+
     res.json({ success: true, portrait });
   } catch (error) {
     res.status(500).json({ error: '获取画像失败', message: (error as Error).message });
@@ -384,6 +433,8 @@ app.get('/api/portraits', async (req, res) => {
     // 班级老师只看本班学生；admin（无 classId）看全部
     const classId = typeof req.query.classId === 'string' ? req.query.classId.trim() : '';
     if (classId) portraits = portraits.filter((p) => p.classId === classId);
+    // 元话语兜底清洗（历史落库数据）
+    for (const p of portraits) sanitizePortraitInPlace(p);
     res.json({ success: true, portraits });
   } catch (error) {
     res.status(500).json({ error: '获取画像列表失败', message: (error as Error).message });
@@ -406,7 +457,7 @@ app.get('/api/report/:childId', async (req, res) => {
   try {
     const { childId } = req.params;
     const report = await system.generatePortraitReport(childId);
-    res.json({ success: true, report });
+    res.json({ success: true, report: sanitizeReportText(report) });
   } catch (error) {
     res.status(500).json({ error: '生成报告失败', message: (error as Error).message });
   }
@@ -648,6 +699,20 @@ function getPostgres(): PostgresStorage | null {
   return storage instanceof PostgresStorage ? storage : null;
 }
 
+// 默认口令清单：命中则要求首次登录后强制修改密码（P0-1）
+// 生产环境登录页不再展示测试账号，保留清单仅用于标记 mustChangePassword
+const DEFAULT_PASSWORDS: Record<string, string> = {
+  teacher1: '123456',
+  teacher2: '123456',
+  teacher3: '123456',
+  teacher4: '123456',
+  admin: 'admin',
+};
+
+function isDefaultPassword(username: string, password: string): boolean {
+  return DEFAULT_PASSWORDS[username] === password;
+}
+
 // 登录
 app.post('/api/auth/login', async (req, res) => {
   try {
@@ -674,6 +739,7 @@ app.post('/api/auth/login', async (req, res) => {
         success: true,
         user: { id: username, name: user.name, role: user.role, avatar: user.role === 'admin' ? '🔧' : '👩‍🏫' },
         token: signAuthToken({ username, role: user.role }),
+        mustChangePassword: isDefaultPassword(username, password),
       });
     }
 
@@ -691,6 +757,7 @@ app.post('/api/auth/login', async (req, res) => {
       success: true,
       user: { id: username, name: user.name, role: user.role, classId: user.class_id, avatar: user.avatar },
       token: signAuthToken({ username, role: user.role }),
+      mustChangePassword: isDefaultPassword(username, password),
     });
   } catch (error) {
     res.status(500).json({ error: '登录失败', message: (error as Error).message });
