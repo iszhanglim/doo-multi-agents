@@ -16,5 +16,12 @@ run = ["bash", "doo-multi-agent/scripts/run.sh"]
 build = ["bash", "doo-multi-agent/scripts/build.sh"]
 run = ["bash", "doo-multi-agent/scripts/run.sh"]
 
+[deploy.profile]
+kind = "service"
+flavor = "web"
+
+[deploy.backend]
+enabled = true
+
 [subprojects]
 path = ["doo-multi-agent"]
